@@ -120,12 +120,13 @@ export async function waitingConversations(olderThan: Date) {
     SELECT c.id, cu.name, c."lastInboundAt"
     FROM "Conversation" c
     JOIN "Customer" cu ON cu.id = c."customerId"
-    WHERE c."lastInboundAt" IS NOT NULL
+    WHERE c."lastInboundAt" IS NOT NULL AND c."supplierId" IS NULL
       AND c."lastInboundAt" < ${olderThan}
       AND c.status <> 'CLOSED'
       AND NOT EXISTS (
         SELECT 1 FROM "Message" m
-        WHERE m."conversationId" = c.id AND m.direction = 'OUTBOUND' AND m."createdAt" > c."lastInboundAt"
+        WHERE m."conversationId" = c.id AND m.direction = 'OUTBOUND' AND m.status NOT IN ('BLOCKED', 'FAILED')
+          AND m."createdAt" > c."lastInboundAt"
       )
     ORDER BY c."lastInboundAt" ASC`;
 }
