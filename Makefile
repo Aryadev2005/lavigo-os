@@ -3,7 +3,7 @@ COMPOSE ?= docker compose
 RUN     := $(COMPOSE) run --rm --no-deps web
 RUNDB   := $(COMPOSE) run --rm web
 
-.PHONY: up down logs sh migrate seed test lint typecheck job build ps reset
+.PHONY: up down logs sh migrate seed test lint typecheck job inbound build ps reset
 
 up:            ## start the dev stack (web on :3000, mailpit on :8025, minio console on :9001)
 	$(COMPOSE) up -d --build
@@ -37,6 +37,9 @@ typecheck:
 
 job:           ## run a scheduled job once: make job name=reminders
 	$(RUNDB) pnpm job $(name)
+
+inbound:       ## post a signed fake WhatsApp message: make inbound args='--text "Hi" --from 9835011223'
+	$(COMPOSE) exec -T web pnpm -s tsx scripts/simulate-inbound.ts $(args)
 
 build:         ## build the production image locally
 	docker build -f docker/Dockerfile -t lavigo-os:local .
