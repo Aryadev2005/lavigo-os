@@ -154,6 +154,8 @@ const createInput = z
       z.object({ kind: z.literal("link") }),
     ]),
     notes: z.string().max(1000).optional(),
+    /** BKG-2: send the booking_confirmed template on WhatsApp after creating (off by default). */
+    sendConfirmation: z.boolean().default(false),
   })
   .refine((v) => !!v.departureId !== !!v.custom, "Pick a departure or describe a custom trip");
 
@@ -224,6 +226,16 @@ export async function createBookingAction(raw: CreateBookingInputUI): Promise<Ac
   } else if (v.advance.kind === "link") {
     await queuePaymentLink(booking.id, "ADVANCE", { id: user.id, role: user.role }, { send: true, reason: "new_booking" });
     note = "Advance link is on its way";
+  }
+  if (v.sendConfirmation) {
+    const c = await db.customer.findUnique({ where: { id: customerId }, select: { phone: true } });
+    if (c?.phone) {
+      // After the advance above, so the template carries what was actually received.
+      await enqueue("booking.confirm", { bookingId: booking.id }, { jobId: `booking-confirm-${booking.id}` });
+      note = [note, "WhatsApp confirmation on its way"].filter(Boolean).join(" · ");
+    } else {
+      note = [note, "no WhatsApp number, confirmation not sent"].filter(Boolean).join(" · ");
+    }
   }
   revalidateBookings();
   return { ok: true, code: booking.code, note };

@@ -458,6 +458,7 @@ enum BookingSource {
   PHONE
   AI_WHATSAPP
   AI_INSTAGRAM
+  SANDBOX // made from a /sandbox conversation (INB-3): demo/training data, not a real sale
 }
 
 model Booking {
@@ -538,6 +539,7 @@ enum DocumentKind {
   VOUCHER
   TICKET
   TRAVELLER_ID
+  CHAT_MEDIA // photos/PDFs exchanged in the inbox (may contain traveller IDs); both roles, every download audited
   OTHER
 }
 

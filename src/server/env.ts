@@ -17,6 +17,10 @@ const optionalString = z.preprocess(emptyToUndefined, z.string().optional());
 const boolString = z
   .preprocess(emptyToUndefined, z.enum(["true", "false", "1", "0"]).optional())
   .transform((v) => v === "true" || v === "1");
+/** Like boolString, but keeps "unset" so a default can depend on NODE_ENV. */
+const optionalBool = z
+  .preprocess(emptyToUndefined, z.enum(["true", "false", "1", "0"]).optional())
+  .transform((v) => (v === undefined ? undefined : v === "true" || v === "1"));
 
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -28,7 +32,8 @@ const schema = z.object({
 
   DATABASE_URL: z.string().min(1),
   REDIS_URL: z.string().min(1).default("redis://localhost:6379"),
-  AUTH_SECRET: z.string().min(1),
+  /** Required in production; dev/test fall back to DEV_SECRETS below. */
+  AUTH_SECRET: optionalString,
 
   S3_ENDPOINT: optionalString,
   /** Endpoint the BROWSER uses for presigned URLs (dev: http://localhost:9000). Defaults to S3_ENDPOINT. */
@@ -49,6 +54,8 @@ const schema = z.object({
   IG_ACCOUNT_ID: optionalString,
   IG_ACCESS_TOKEN: optionalString,
   FEATURE_INSTAGRAM: boolString,
+  /** INB-3 customer simulator. Unset → on outside production, off in production. */
+  FEATURE_SANDBOX: optionalBool,
 
   RAZORPAY_KEY_ID: optionalString,
   RAZORPAY_KEY_SECRET: optionalString,
@@ -59,7 +66,8 @@ const schema = z.object({
   SENTRY_DSN: optionalString,
 });
 
-type RawEnv = z.infer<typeof schema>;
+type ParsedEnv = z.infer<typeof schema>;
+type RawEnv = Omit<ParsedEnv, "FEATURE_SANDBOX"> & { FEATURE_SANDBOX: boolean };
 
 /** Keys each real adapter needs. Empty in dev/test → fake adapter. */
 const PROVIDER_KEYS = {
@@ -77,17 +85,33 @@ export type Env = RawEnv & {
   isProd: boolean;
   isTest: boolean;
   providers: Record<Provider, ProviderMode>;
+  secrets: Secrets;
 };
 
 const WEAK_SECRETS = new Set(["change-me", "changeme", "secret"]);
+
+/**
+ * The ONLY hardcoded secrets in the codebase, used outside production when the variable is unset,
+ * so a fresh dev stack and the simulate-* scripts work without real keys. Never used in production:
+ * parseEnv refuses to boot there instead.
+ */
+const DEV_SECRETS = {
+  AUTH_SECRET: "dev-only-auth-secret-not-for-production-0123456789",
+  META_APP_SECRET: "dev-meta-app-secret",
+  WA_VERIFY_TOKEN: "dev-wa-verify-token",
+  RAZORPAY_WEBHOOK_SECRET: "dev-razorpay-webhook-secret",
+} as const;
+
+/** Resolved secrets: the env value, else (dev/test only) the dev fallback. */
+export type Secrets = { [K in keyof typeof DEV_SECRETS]: string };
 
 export function parseEnv(source: Record<string, string | undefined> = process.env): Env {
   const parsed = schema.safeParse(source);
   if (!parsed.success) {
     throw new Error(`Invalid environment:\n${z.prettifyError(parsed.error)}`);
   }
-  const raw = parsed.data;
-  const isProd = raw.NODE_ENV === "production";
+  const isProd = parsed.data.NODE_ENV === "production";
+  const raw: RawEnv = { ...parsed.data, FEATURE_SANDBOX: parsed.data.FEATURE_SANDBOX ?? !isProd };
 
   const has = (k: keyof RawEnv) => raw[k] !== undefined && raw[k] !== "";
   const providers = {} as Record<Provider, ProviderMode>;
@@ -104,13 +128,18 @@ export function parseEnv(source: Record<string, string | undefined> = process.en
   }
 
   if (isProd) {
-    if (raw.AUTH_SECRET.length < 32 || WEAK_SECRETS.has(raw.AUTH_SECRET)) missing.push("AUTH_SECRET (≥ 32 random chars)");
+    const auth = raw.AUTH_SECRET ?? "";
+    if (auth.length < 32 || WEAK_SECRETS.has(auth)) missing.push("AUTH_SECRET (≥ 32 random chars)");
     if (missing.length > 0) {
       throw new Error(`Refusing to boot in production. Missing or weak: ${[...new Set(missing)].join(", ")}`);
     }
   }
 
-  return { ...raw, isProd, isTest: raw.NODE_ENV === "test", providers };
+  const secrets = Object.fromEntries(
+    (Object.keys(DEV_SECRETS) as (keyof Secrets)[]).map((k) => [k, raw[k] || (isProd ? "" : DEV_SECRETS[k])]),
+  ) as Secrets;
+
+  return { ...raw, isProd, isTest: raw.NODE_ENV === "test", providers, secrets };
 }
 
 let cached: Env | undefined;

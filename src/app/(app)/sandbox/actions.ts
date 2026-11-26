@@ -1,12 +1,20 @@
 "use server";
 /** Sandbox (INB-3): staff play the customer; messages go through ingestInbound like WhatsApp's. */
 import { revalidatePath } from "next/cache";
+import { notFound } from "next/navigation";
 import { z } from "zod";
 import { createSandboxConversation, sandboxCustomerSays } from "@/server/domain/conversations";
 import { normalizePhone } from "@/server/phone";
+import { channelEnabled } from "@/server/channels";
 import { requireUser } from "@/server/rbac";
 
+/** FEATURE_SANDBOX off → the actions don't exist (404), same as the page. */
+function sandboxOr404() {
+  if (!channelEnabled("SANDBOX")) notFound();
+}
+
 export async function createSandboxAction(name: string, phone: string) {
+  sandboxOr404();
   const user = await requireUser();
   const n = z.string().trim().min(2, "Enter the customer's name").max(120).safeParse(name);
   if (!n.success) return { ok: false as const, error: n.error.issues[0]!.message };
@@ -18,6 +26,7 @@ export async function createSandboxAction(name: string, phone: string) {
 }
 
 export async function sandboxSayAction(conversationId: string, text: string) {
+  sandboxOr404();
   await requireUser();
   const input = z.object({ conversationId: z.string().min(1).max(64), text: z.string().trim().min(1).max(4000) }).safeParse({ conversationId, text });
   if (!input.success) return { ok: false as const, error: "Type a message first" };

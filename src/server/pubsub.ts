@@ -17,7 +17,8 @@ export type AppEvent =
   | { type: "payment.received"; payload: { bookingId: string; amount: number } }
   | { type: "booking.updated"; payload: { bookingId: string } }
   | { type: "activity.created"; payload: { activityId: string; text: string; icon: string } }
-  | { type: "toast"; payload: { text: string; icon?: string } };
+  /** audience: only sessions with that role show it (default everyone). */
+  | { type: "toast"; payload: { text: string; icon?: string; audience?: "OWNER" | "STAFF" } };
 
 export async function publish(event: AppEvent): Promise<void> {
   await redis.publish(EVENTS_CHANNEL, JSON.stringify(event));

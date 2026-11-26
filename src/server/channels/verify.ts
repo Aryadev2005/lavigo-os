@@ -5,20 +5,17 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { env } from "../env";
 
-/** Dev/test only: lets scripts/simulate-inbound.ts sign payloads without real Meta keys. */
-export const DEV_META_APP_SECRET = "dev-meta-app-secret";
-export const DEV_WA_VERIFY_TOKEN = "dev-wa-verify-token";
-
+/** App secret for signatures. Dev/test fallbacks live only in env.ts (production refuses to boot without it). */
 export function metaAppSecret(): string {
-  if (env.META_APP_SECRET) return env.META_APP_SECRET;
-  if (env.isProd) throw new Error("META_APP_SECRET is not set"); // env.ts already refuses to boot
-  return DEV_META_APP_SECRET;
+  const s = env.secrets.META_APP_SECRET;
+  if (!s) throw new Error("META_APP_SECRET is not set");
+  return s;
 }
 
 export function waVerifyToken(): string {
-  if (env.WA_VERIFY_TOKEN) return env.WA_VERIFY_TOKEN;
-  if (env.isProd) throw new Error("WA_VERIFY_TOKEN is not set");
-  return DEV_WA_VERIFY_TOKEN;
+  const s = env.secrets.WA_VERIFY_TOKEN;
+  if (!s) throw new Error("WA_VERIFY_TOKEN is not set");
+  return s;
 }
 
 export function signMetaBody(rawBody: string | Buffer, secret: string): string {

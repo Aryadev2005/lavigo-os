@@ -5,10 +5,10 @@
  */
 import NextAuth from "next-auth";
 import type { NextFetchEvent, NextRequest } from "next/server";
-import { authConfig } from "@/server/auth.config";
+import { authConfig, authSecret } from "@/server/auth.config";
 
 // Called with a request, Auth.js's auth() runs the `authorized` callback in auth.config.ts.
-const authMiddleware = NextAuth(authConfig).auth as unknown as (req: NextRequest, ev: NextFetchEvent) => Promise<Response | undefined>;
+const authMiddleware = NextAuth(() => ({ ...authConfig, secret: authSecret() })).auth as unknown as (req: NextRequest, ev: NextFetchEvent) => Promise<Response | undefined>;
 
 // A plain function export so Next's build can statically detect the proxy.
 export function proxy(request: NextRequest, event: NextFetchEvent) {

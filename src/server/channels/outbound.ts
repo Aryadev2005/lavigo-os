@@ -35,6 +35,8 @@ export type OutboundAuthor = { userId: string } | "SYSTEM";
 export type OutboundOptions = {
   /** Render the bubble as a quote or payment-link card (P4 deal desk). */
   card?: { kind: Extract<MessageKind, "QUOTE" | "PAYMENT_LINK">; payload: Record<string, unknown> };
+  /** Extra keys stored on Message.payload for later lookups, e.g. { bookingId } on reminders. */
+  meta?: Record<string, string | number | boolean | null>;
   now?: Date;
 };
 
@@ -150,6 +152,7 @@ export async function send(
     kind = opts.card.kind;
     Object.assign(extra, opts.card.payload);
   }
+  if (opts.meta) Object.assign(extra, opts.meta);
 
   const message = await db.message.create({
     data: {
@@ -274,7 +277,7 @@ export async function sendTemplate(
   target: OutboundTarget,
   templateName: string,
   vars: TemplateVars,
-  opts: { authorUserId?: string | null; buttonUrlSuffix?: string } = {},
+  opts: { authorUserId?: string | null; buttonUrlSuffix?: string; meta?: OutboundOptions["meta"] } = {},
 ): Promise<SendResult> {
   const conversation = await resolveConversation(target);
   if (!conversation) return { sent: false, reason: "customer has no WhatsApp number" };
@@ -282,6 +285,7 @@ export async function sendTemplate(
     conversation.id,
     { type: "template", name: templateName, vars, buttonUrlSuffix: opts.buttonUrlSuffix },
     opts.authorUserId ? { userId: opts.authorUserId } : "SYSTEM",
+    { meta: opts.meta },
   );
   if (r.status === "BLOCKED") return { sent: false, reason: r.reason };
   return { sent: true, messageId: r.messageId, conversationId: r.conversationId, body: r.body };

@@ -5,6 +5,12 @@
  */
 import type { Role } from "@prisma/client";
 import type { NextAuthConfig } from "next-auth";
+import { getEnv } from "./env";
+
+/** AUTH_SECRET from env.ts (which supplies the dev-only fallback outside production). */
+export function authSecret(): string {
+  return getEnv().secrets.AUTH_SECRET;
+}
 
 const PUBLIC_PREFIXES = ["/api/health", "/api/auth", "/api/webhooks"];
 

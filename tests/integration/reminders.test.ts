@@ -5,7 +5,7 @@ vi.mock("@/server/queue", () => ({ enqueue: vi.fn(), enqueueReplacingFinished: v
 vi.mock("@/server/pubsub", () => ({ publish: vi.fn(async () => undefined) }));
 
 const { createBooking, evaluateForDeparture } = await import("@/server/domain/bookings");
-const { runReminders } = await import("@/server/domain/dues");
+const { createAndSendLink, getDuesBoard, runReminders } = await import("@/server/domain/dues");
 const { db } = await import("@/server/db");
 const { addDays, todayIST } = await import("@/server/time");
 const { ensureSettings, makeCustomer, makeDeparture, makeOwner } = await import("./fixtures");
@@ -73,5 +73,25 @@ describe("runReminders (PAY-6)", () => {
     expect(reminderMessages).toBe(1);
     expect(await db.paymentLink.count({ where: { bookingId: dueSoon.id, purpose: "BALANCE" } })).toBe(1);
     expect(await db.activityEvent.count({ where: { entityId: late.id, type: "reminder.flagged" } })).toBe(1);
+  });
+
+  it("skips a booking that got any reminder message in the last 24h, and counts it on the board", async () => {
+    const booking = await confirmedBookingDueIn(7); // before_7d fires today
+    // Staff pressed "Send link" on Dues an hour ago: a payment_reminder message, no ReminderLog row.
+    const manual = await createAndSendLink({ bookingId: booking.id, purpose: "BALANCE" });
+    expect(manual.sent).toBe(true);
+
+    const r = await runReminders();
+    expect(r.failed).toBe(0);
+
+    const log = await db.reminderLog.findFirstOrThrow({ where: { bookingId: booking.id }, include: { rule: true } });
+    expect([log.rule.key, log.status, log.detail]).toEqual(["before_7d", "SKIPPED", "reminded in the last 24h"]);
+    const messages = await db.message.count({
+      where: { conversation: { customerId: booking.customerId }, kind: "TEMPLATE", direction: "OUTBOUND" },
+    });
+    expect(messages).toBe(1); // only the manual one
+
+    const row = (await getDuesBoard()).rows.find((x) => x.bookingId === booking.id);
+    expect(row?.remindersSent).toBe(1); // the manual send counts, though no rule ran
   });
 });

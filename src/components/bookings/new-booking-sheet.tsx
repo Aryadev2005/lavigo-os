@@ -23,7 +23,7 @@ export function NewBookingSheet({ role, departures, closeHref }: { role: Role; d
   // customer
   const [query, setQuery] = useState("");
   const [rawHits, setHits] = useState<CustomerHit[]>([]);
-  const [customer, setCustomer] = useState<{ id: string; name: string } | null>(null);
+  const [customer, setCustomer] = useState<{ id: string; name: string; phone: string | null } | null>(null);
   const [newCustomer, setNewCustomer] = useState(false);
   const [newName, setNewName] = useState("");
   const [newPhone, setNewPhone] = useState("");
@@ -44,6 +44,7 @@ export function NewBookingSheet({ role, departures, closeHref }: { role: Role; d
   const [advance, setAdvance] = useState<"none" | "manual" | "link">("none");
   const [advAmount, setAdvAmount] = useState("");
   const [advMethod, setAdvMethod] = useState<"CASH" | "BANK_TRANSFER" | "UPI" | "CARD">("CASH");
+  const [sendConfirmation, setSendConfirmation] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const dep = departures.find((d) => d.id === departureId);
@@ -91,6 +92,7 @@ export function NewBookingSheet({ role, departures, closeHref }: { role: Role; d
   const view = check?.view;
   const ownerView = view && view.role === "OWNER" ? view : null;
   const tone = !check ? undefined : check.ok ? (check.reason === "OWNER_BELOW_FLOOR_CONFIRMED" ? "var(--warn)" : "var(--ok)") : "var(--bad)";
+  const hasPhone = customer ? !!customer.phone : !!newPhone.trim();
   const customerReady = customer || (newCustomer && newName.trim().length >= 2);
   const canSubmit = !!customerReady && !!check?.ok && !pending && (kind === "fixed" ? !!departureId : customTitle && customStart && customCost);
 
@@ -107,6 +109,7 @@ export function NewBookingSheet({ role, departures, closeHref }: { role: Role; d
         confirmBelowFloor,
         travellers: travellers.filter((t) => t.trim().length >= 2).map((fullName) => ({ fullName })),
         advance: advance === "manual" ? { kind: "manual", amount: advAmount, method: advMethod } : { kind: advance },
+        sendConfirmation: sendConfirmation && hasPhone,
       });
       if (!r.ok) {
         setError(r.error);
@@ -168,7 +171,7 @@ export function NewBookingSheet({ role, departures, closeHref }: { role: Role; d
                   type="button"
                   className="btn b2 sm"
                   style={{ display: "flex", width: "100%", justifyContent: "space-between", marginBottom: 4, border: 0 }}
-                  onClick={() => setCustomer({ id: h.id, name: h.name })}
+                  onClick={() => setCustomer({ id: h.id, name: h.name, phone: h.phone ?? null })}
                 >
                   <span>{h.name}</span>
                   <small className="muted">
@@ -358,6 +361,12 @@ export function NewBookingSheet({ role, departures, closeHref }: { role: Role; d
           Seats are held for the quote validity period; unpaid holds are released automatically.
         </p>
       )}
+
+      <label style={{ display: "flex", gap: 8, marginTop: 14, alignItems: "center", fontSize: 13.5, opacity: hasPhone ? 1 : 0.55 }}>
+        <input type="checkbox" checked={sendConfirmation && hasPhone} disabled={!hasPhone} onChange={(e) => setSendConfirmation(e.target.checked)} />
+        Send WhatsApp confirmation
+        {!hasPhone ? <span className="muted">(add a WhatsApp number first)</span> : null}
+      </label>
 
       {error ? (
         <p style={{ color: "var(--bad)", fontSize: 13.5, marginTop: 10 }} role="alert">

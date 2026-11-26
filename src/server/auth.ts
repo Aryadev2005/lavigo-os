@@ -5,7 +5,7 @@ import NextAuth, { CredentialsSignin } from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import { z } from "zod";
 import { audit } from "./audit";
-import { authConfig } from "./auth.config";
+import { authConfig, authSecret } from "./auth.config";
 import { db } from "./db";
 import { clearLoginFailures, isLockedOut, recordLoginFailure } from "./login-rate-limit";
 import { logger } from "./logger";
@@ -33,8 +33,10 @@ export function clientIp(headers: Headers): string {
   return hops.at(-1) ?? headers.get("x-real-ip") ?? "unknown";
 }
 
-export const { handlers, auth, signIn, signOut } = NextAuth({
+// Lazy config: the secret is resolved from env.ts per request (dev fallback lives only there).
+export const { handlers, auth, signIn, signOut } = NextAuth(() => ({
   ...authConfig,
+  secret: authSecret(),
   providers: [
     Credentials({
       credentials: { email: { type: "email" }, password: { type: "password" } },
@@ -65,4 +67,4 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       },
     }),
   ],
-});
+}));

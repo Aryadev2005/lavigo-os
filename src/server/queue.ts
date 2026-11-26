@@ -24,6 +24,9 @@ export const QUEUES = [
   "campaign.attribute",
   "maintenance.prune",
   "webhooks.sweep",
+  "approval.expire",
+  "notify.owner",
+  "booking.confirm",
 ] as const;
 
 export type QueueName = (typeof QUEUES)[number];
@@ -108,6 +111,7 @@ export function createWorker<T = unknown, R = unknown>(
 export const REPEATABLES: { queue: QueueName; pattern: string }[] = [
   { queue: "reminders.daily", pattern: "0 10 * * *" },
   { queue: "webhooks.sweep", pattern: "*/5 * * * *" },
+  { queue: "followups.scan", pattern: "0 * * * *" },
 ];
 
 export async function registerRepeatables(): Promise<void> {

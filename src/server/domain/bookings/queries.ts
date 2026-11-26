@@ -16,6 +16,7 @@ export const SOURCE_LABEL: Record<BookingSource, string> = {
   PHONE: "Phone",
   AI_WHATSAPP: "WhatsApp",
   AI_INSTAGRAM: "Instagram",
+  SANDBOX: "Sandbox",
 } as Record<BookingSource, string>;
 
 export type BookingFilter = "all" | "paid" | "due";

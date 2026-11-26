@@ -10,7 +10,7 @@ import { logger } from "../../logger";
 import { publish } from "../../pubsub";
 import { enqueue } from "../../queue";
 import { getStorage } from "../../storage/s3";
-import { getAdapter } from "../../channels";
+import { channelEnabled, getAdapter } from "../../channels";
 import { ALLOWED_MEDIA } from "../../channels/media";
 import { ChannelSendError, type NormalizedInbound, type NormalizedStatus } from "../../channels/types";
 
@@ -18,6 +18,18 @@ export type IngestOutcome =
   | { status: "duplicate"; messageId: string; conversationId: string }
   | { status: "customer"; messageId: string; conversationId: string; createdConversation: boolean }
   | { status: "supplier"; messageId: string; conversationId: string; supplierId: string };
+
+/** FEATURE_SANDBOX is off: the simulator must not create or feed conversations. */
+export class SandboxDisabledError extends Error {
+  constructor() {
+    super("The sandbox is turned off (FEATURE_SANDBOX)");
+    this.name = "SandboxDisabledError";
+  }
+}
+
+export function assertSandboxEnabled() {
+  if (!channelEnabled("SANDBOX")) throw new SandboxDisabledError();
+}
 
 const isUniqueViolation = (err: unknown) => err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002";
 
@@ -79,6 +91,7 @@ async function upsertCustomer(m: NormalizedInbound) {
 }
 
 export async function ingestInbound(m: NormalizedInbound): Promise<IngestOutcome> {
+  if (m.channel === "SANDBOX") assertSandboxEnabled();
   const dup = await existingMessage(m.externalId);
   if (dup) return { status: "duplicate", messageId: dup.id, conversationId: dup.conversationId };
   const at = new Date(m.timestamp);
@@ -174,7 +187,7 @@ async function saveInbound(
         "lastInboundAt" = GREATEST(COALESCE("lastInboundAt", ${at}), ${at}),
         "lastMessageAt" = GREATEST("lastMessageAt", ${at}),
         "unreadCount"   = "unreadCount" + 1,
-        status = CASE WHEN status IN ('CLOSED', 'FOLLOW_UP') THEN 'ACTIVE'::"ConversationStatus" ELSE status END,
+        status = CASE WHEN status = 'CLOSED' THEN 'ACTIVE'::"ConversationStatus" WHEN status = 'FOLLOW_UP' THEN 'QUOTED'::"ConversationStatus" ELSE status END,
         "updatedAt" = now()
       WHERE id = ${conversationId}`;
     return msg.id;
@@ -240,7 +253,7 @@ export async function storeInboundMedia(messageId: string): Promise<"stored" | "
   const doc = await db.document.upsert({
     where: { storageKey: key },
     update: {},
-    create: { kind: "OTHER", storageKey: key, fileName, mimeType: file.mime, sizeBytes: file.bytes.length },
+    create: { kind: "CHAT_MEDIA", storageKey: key, fileName, mimeType: file.mime, sizeBytes: file.bytes.length },
   });
   await db.message.update({
     where: { id: msg.id },

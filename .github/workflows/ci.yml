@@ -81,7 +81,14 @@ jobs:
             --to-schema-datamodel prisma/schema.prisma \
             --shadow-database-url "$SHADOW_URL" \
             --exit-code
+      # Tests never use $DATABASE_URL itself: vitest rewrites it to lavigo_test, which
+      # tests/global-setup.ts drops, recreates and migrates; tests/setup-guard.ts refuses any other DB.
       - run: pnpm test
+      - name: Tests left the main database alone
+        run: |
+          n=$(psql "$DATABASE_URL" -Atc 'select count(*) from "User"')
+          echo "users in $DATABASE_URL after tests: $n"
+          test "$n" = "0"
 
   build:
     needs: test

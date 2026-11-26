@@ -6,6 +6,8 @@ import { markReadAction } from "@/app/(app)/inbox/actions";
 import { initials } from "@/lib/utils";
 import type { Card, ThreadMessage, ThreadView } from "@/server/domain/conversations/queries";
 import { inr } from "@/server/money";
+import { FollowUpButton, PaymentLinkButton } from "@/components/deals/deal-actions";
+import type { DealPanel } from "@/server/domain/deals/queries";
 import { Composer, type ComposerDeparture, type ComposerTemplate } from "./composer";
 
 function Ticks({ status, error }: { status: string; error: string | null }) {
@@ -24,6 +26,12 @@ function Ticks({ status, error }: { status: string; error: string | null }) {
     default:
       return null;
   }
+}
+
+/** A document's caption: outbound bodies are "📎 file.pdf\ncaption"; inbound "📷 …" placeholders have none. */
+function caption(body: string): string {
+  if (body.startsWith("📎")) return body.split("\n").slice(1).join("\n").trim();
+  return body.startsWith("📷") ? "" : body;
 }
 
 function CardView({ card, body }: { card: Card; body: string }) {
@@ -82,7 +90,7 @@ function CardView({ card, body }: { card: Card; body: string }) {
           <span>📎 {card.fileName}</span>
         )}
         {card.error ? <div className="muted" style={{ fontSize: 12 }}>Couldn&apos;t download: {card.error}</div> : null}
-        {body && !body.startsWith("📎") && !body.startsWith("📷") ? <div className="body">{body}</div> : null}
+        {caption(body) ? <div className="body">{caption(body)}</div> : null}
       </div>
     );
   }
@@ -112,11 +120,14 @@ export function Thread({
   departures,
   templates,
   hideHeaderLinks,
+  deal,
 }: {
   thread: ThreadView;
   departures: ComposerDeparture[];
   templates: ComposerTemplate[];
   hideHeaderLinks?: boolean;
+  /** Deal state for the bar above the composer (visible on narrow screens where the panel hides). */
+  deal?: DealPanel | null;
 }) {
   const ref = useRef<HTMLDivElement>(null);
   const last = thread.lastMessageId;
@@ -156,6 +167,21 @@ export function Thread({
           thread.messages.map((m) => <Bubble key={m.id} m={m} />)
         )}
       </div>
+      {deal && (deal.approval || (deal.quote?.valid && deal.quote.link !== "paid") || deal.followUpDue) ? (
+        <div className="dealbar">
+          {deal.approval ? (
+            <span className="pill p-w">🤝 {deal.role === "OWNER" ? "Needs your OK (see panel)" : "Waiting for owner"}</span>
+          ) : deal.quote?.valid ? (
+            <>
+              <span className="muted">
+                Quote {inr(deal.quote.totalAmount)} · valid till {deal.quote.validUntil}
+              </span>
+              <PaymentLinkButton key={deal.quote.id} conversationId={thread.id} quoteId={deal.quote.id} link={deal.quote.link} advance={deal.quote.advance} />
+            </>
+          ) : null}
+          {deal.followUpDue ? <FollowUpButton conversationId={thread.id} /> : null}
+        </div>
+      ) : null}
       <Composer
         key={thread.id}
         conversationId={thread.id}
@@ -163,6 +189,8 @@ export function Thread({
         window={thread.window}
         firstName={thread.customer.firstName}
         tripLabel={thread.lead.tripLabel}
+        departureCode={thread.lead.departureCode}
+        pax={thread.lead.pax}
         departures={departures}
         templates={templates}
       />

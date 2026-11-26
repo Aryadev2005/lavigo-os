@@ -1,11 +1,11 @@
 "use client";
-/** INB-8 right panel: editable lead; deal guardrail, approval and timeline arrive with the deal desk (P4). */
+/** INB-8 right panel, top: the editable lead. The deal desk section renders below it (DealPanelView). */
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
 import { updateLeadAction } from "@/app/(app)/inbox/actions";
 import { useToast } from "@/components/shell/toast";
 
-type Lead = { departureId: string | null; tripLabel: string | null; pax: number | null; sourceNote: string | null; temp: "NEW" | "COLD" | "WARM" | "HOT" };
+type Lead = { departureId: string | null; departureCode?: string | null; tripLabel: string | null; pax: number | null; sourceNote: string | null; temp: "NEW" | "COLD" | "WARM" | "HOT" };
 const TEMP: Record<Lead["temp"], string> = { NEW: "New", COLD: "🧊 Cold", WARM: "🌤 Warm", HOT: "🔥 Hot" };
 
 export function LeadPanel({ conversationId, lead, departures, channelLabel }: { conversationId: string; lead: Lead; departures: { id: string; label: string }[]; channelLabel: string }) {
@@ -21,7 +21,7 @@ export function LeadPanel({ conversationId, lead, departures, channelLabel }: { 
   const options = lead.departureId && !departures.some((d) => d.id === lead.departureId) ? [{ id: lead.departureId, label: lead.tripLabel ?? "Earlier trip" }, ...departures] : departures;
 
   return (
-    <div className="ipanel">
+    <>
       <h4>Lead</h4>
       <div className="fld">
         <label htmlFor="lead-trip">Trip</label>
@@ -77,13 +77,6 @@ export function LeadPanel({ conversationId, lead, departures, channelLabel }: { 
           {pending ? "Saving…" : "Save lead"}
         </button>
       ) : null}
-
-      <h4>Deal guardrail</h4>
-      <div className="soon">The quote builder and price guardrail arrive with the deal desk.</div>
-      <h4>Approval</h4>
-      <div className="soon">Owner approvals for prices below the staff limit show here.</div>
-      <h4>Timeline</h4>
-      <div className="soon">Quotes, approvals, payment links and payments for this chat will be listed here.</div>
-    </div>
+    </>
   );
 }

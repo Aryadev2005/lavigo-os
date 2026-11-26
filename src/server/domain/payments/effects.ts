@@ -39,7 +39,7 @@ export async function afterPaymentCaptured(r: { bookingId: string; paymentId: st
       },
     ],
     ["sse", () => publish({ type: "booking.updated", payload: { bookingId: r.bookingId } })],
-    ["hook", () => onPaymentCaptured(r.bookingId)],
+    ["hook", () => onPaymentCaptured(r.bookingId, { paymentId: r.paymentId, amount: r.amount, outcome: r.outcome })],
   ];
   for (const [name, step] of steps) {
     try {
