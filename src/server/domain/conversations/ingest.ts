@@ -10,7 +10,7 @@ import { logger } from "../../logger";
 import { publish } from "../../pubsub";
 import { enqueue } from "../../queue";
 import { getStorage } from "../../storage/s3";
-import { getAdapter } from "../../channels";
+import { channelEnabled, getAdapter } from "../../channels";
 import { ALLOWED_MEDIA } from "../../channels/media";
 import { ChannelSendError, type NormalizedInbound, type NormalizedStatus } from "../../channels/types";
 
@@ -18,6 +18,18 @@ export type IngestOutcome =
   | { status: "duplicate"; messageId: string; conversationId: string }
   | { status: "customer"; messageId: string; conversationId: string; createdConversation: boolean }
   | { status: "supplier"; messageId: string; conversationId: string; supplierId: string };
+
+/** FEATURE_SANDBOX is off: the simulator must not create or feed conversations. */
+export class SandboxDisabledError extends Error {
+  constructor() {
+    super("The sandbox is turned off (FEATURE_SANDBOX)");
+    this.name = "SandboxDisabledError";
+  }
+}
+
+export function assertSandboxEnabled() {
+  if (!channelEnabled("SANDBOX")) throw new SandboxDisabledError();
+}
 
 const isUniqueViolation = (err: unknown) => err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002";
 
@@ -79,6 +91,7 @@ async function upsertCustomer(m: NormalizedInbound) {
 }
 
 export async function ingestInbound(m: NormalizedInbound): Promise<IngestOutcome> {
+  if (m.channel === "SANDBOX") assertSandboxEnabled();
   const dup = await existingMessage(m.externalId);
   if (dup) return { status: "duplicate", messageId: dup.id, conversationId: dup.conversationId };
   const at = new Date(m.timestamp);

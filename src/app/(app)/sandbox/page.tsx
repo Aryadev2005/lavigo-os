@@ -3,18 +3,21 @@
  * on the right. Messages go through ingestInbound and the outbound queue exactly like WhatsApp's.
  */
 import Link from "next/link";
+import { notFound } from "next/navigation";
 import { LiveRefresh } from "@/components/live-refresh";
 import { Thread } from "@/components/inbox/thread";
 import { SandboxPhone, SandboxPicker } from "@/components/sandbox/sandbox";
 import { listSandboxConversations } from "@/server/domain/conversations";
 import { getThread, listOpenDepartures, listSendableTemplates } from "@/server/domain/conversations/queries";
 import { getDealPanel } from "@/server/domain/deals/queries";
+import { channelEnabled } from "@/server/channels";
 import { requireUser } from "@/server/rbac";
 
 export const metadata = { title: "Sandbox" };
 export const dynamic = "force-dynamic";
 
 export default async function Page(props: PageProps<"/sandbox">) {
+  if (!channelEnabled("SANDBOX")) notFound();
   const user = await requireUser();
   const sp = await props.searchParams;
   const conversations = await listSandboxConversations();

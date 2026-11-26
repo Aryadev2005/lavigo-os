@@ -24,6 +24,7 @@ export default defineConfig({
     environment: "node",
     include: ["tests/**/*.test.ts"],
     globalSetup: ["tests/global-setup.ts"],
+    setupFiles: ["tests/setup-guard.ts"],
     // Row-lock contention tests wait on each other; give them room.
     testTimeout: 30_000,
     hookTimeout: 120_000,

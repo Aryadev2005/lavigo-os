@@ -7,6 +7,7 @@ import { LeadPanel } from "@/components/inbox/lead-panel";
 import { Thread } from "@/components/inbox/thread";
 import { listConversations, getThread, listOpenDepartures, listSendableTemplates, type InboxTab } from "@/server/domain/conversations/queries";
 import { getDealPanel } from "@/server/domain/deals/queries";
+import { channelEnabled } from "@/server/channels";
 import { requireUser } from "@/server/rbac";
 
 export const metadata = { title: "Inbox" };
@@ -38,9 +39,11 @@ export default async function Page(props: PageProps<"/inbox">) {
           <div style={{ textAlign: "center" }}>
             No conversations yet.
             <br />
-            <Link href="/sandbox" className="btn b2 sm" style={{ marginTop: 10 }}>
-              Try the sandbox
-            </Link>
+            {channelEnabled("SANDBOX") ? (
+              <Link href="/sandbox" className="btn b2 sm" style={{ marginTop: 10 }}>
+                Try the sandbox
+              </Link>
+            ) : null}
           </div>
         </div>
       )}

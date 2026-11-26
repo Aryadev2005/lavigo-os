@@ -5,7 +5,7 @@ import type { InboundEventPayload } from "@/server/channels/types";
 import { applyStatus, ingestInbound, storeInboundMedia } from "@/server/domain/conversations/ingest";
 import { expireHold } from "@/server/domain/bookings";
 import { createQuoteLink, expireApproval, notifyOwnersOfApproval, scanFollowUps } from "@/server/domain/deals";
-import { sendInvoiceToChat } from "@/server/domain/deals/confirmations";
+import { sendBookingConfirmation, sendInvoiceToChat } from "@/server/domain/deals/confirmations";
 import { createAndSendLink, runReminders } from "@/server/domain/dues";
 import { env } from "@/server/env";
 import { applyPaymentEvent } from "@/server/domain/payments";
@@ -122,6 +122,7 @@ export const PROCESSORS: Partial<Record<QueueName, Processor>> = {
   "webhooks.sweep": async () => sweepWebhooks(),
   "followups.scan": async () => scanFollowUps(),
   "approval.expire": async (job) => ({ outcome: await expireApproval((job.data as { approvalId: string }).approvalId) }),
+  "booking.confirm": async (job) => ({ outcome: await sendBookingConfirmation((job.data as { bookingId: string }).bookingId) }),
   "notify.owner": async (job) => notifyOwnersOfApproval((job.data as { approvalId: string }).approvalId, env.APP_URL),
   "hold.expire": async (job) => {
     const outcome = await expireHold((job.data as { bookingId: string }).bookingId);

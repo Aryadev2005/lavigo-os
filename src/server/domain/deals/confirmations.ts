@@ -4,7 +4,7 @@
  * the confirmation is keyed by paymentId on Message.payload, the invoice by Document.sentAt.
  */
 import type { ApplyOutcome } from "../payments";
-import { send, windowOpen } from "../../channels/outbound";
+import { send, sendTemplate, windowOpen } from "../../channels/outbound";
 import { db } from "../../db";
 import { logger } from "../../logger";
 import { inr } from "../../money";
@@ -90,6 +90,38 @@ export async function sendInvoiceToChat(bookingId: string, documentId: string | 
   const r = await send(b.conversation.id, { type: "document", documentId: doc.id, caption }, "SYSTEM", { meta: { bookingId } });
   if (r.status === "BLOCKED") {
     await db.document.update({ where: { id: doc.id }, data: { sentAt: null } });
+    return "skipped";
+  }
+  return "sent";
+}
+
+/**
+ * New booking sheet (BKG-2): "Send WhatsApp confirmation" ticked → the booking_confirmed template to
+ * the customer's WhatsApp number. Runs in the worker (booking.confirm); idempotent per booking via
+ * Message.payload.bookingConfirmation.
+ */
+export async function sendBookingConfirmation(bookingId: string): Promise<"sent" | "skipped"> {
+  const b = await db.booking.findUnique({
+    where: { id: bookingId },
+    include: { customer: { select: { name: true, phone: true } }, departure: { include: { trip: true } } },
+  });
+  if (!b || b.status === "CANCELLED" || !b.customer.phone) return "skipped";
+  const already = await db.message.findFirst({ where: { payload: { path: ["bookingConfirmation"], equals: b.id } }, select: { id: true } });
+  if (already) return "skipped";
+  const name = b.customer.name.split(/[\s&]/)[0] || b.customer.name;
+  const balance = Math.max(0, b.totalAmount - b.paidAmount);
+  const vars = {
+    name,
+    booking_code: b.code,
+    trip: b.departure ? `${b.departure.trip.name} ${formatDate(b.departure.startDate)}` : (b.customTitle ?? "your trip"),
+    pax: String(b.pax),
+    paid: inr(b.paidAmount),
+    balance: inr(balance),
+    due_date: b.balanceDueDate ? formatDate(b.balanceDueDate) : "before travel",
+  };
+  const r = await sendTemplate({ customerId: b.customerId }, "booking_confirmed", vars, { meta: { bookingId: b.id, bookingConfirmation: b.id } });
+  if (!r.sent) {
+    logger.warn({ bookingId, reason: r.reason }, "booking confirmation not sent");
     return "skipped";
   }
   return "sent";

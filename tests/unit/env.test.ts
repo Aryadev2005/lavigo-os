@@ -54,3 +54,17 @@ describe("parseEnv in development", () => {
     for (const v of Object.values(env.secrets)) expect(v.length).toBeGreaterThan(0);
   });
 });
+
+describe("FEATURE_SANDBOX (INB-3)", () => {
+  it("is off in production unless explicitly set", () => {
+    expect(parseEnv(PROD).FEATURE_SANDBOX).toBe(false);
+    expect(parseEnv({ ...PROD, FEATURE_SANDBOX: "" }).FEATURE_SANDBOX).toBe(false);
+    expect(parseEnv({ ...PROD, FEATURE_SANDBOX: "true" }).FEATURE_SANDBOX).toBe(true);
+  });
+
+  it("is on in development unless explicitly turned off", () => {
+    const dev = { NODE_ENV: "development", DATABASE_URL: "postgresql://u:p@db:5432/lavigo" };
+    expect(parseEnv(dev).FEATURE_SANDBOX).toBe(true);
+    expect(parseEnv({ ...dev, FEATURE_SANDBOX: "false" }).FEATURE_SANDBOX).toBe(false);
+  });
+});

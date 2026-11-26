@@ -8,9 +8,9 @@ import { audit } from "../../audit";
 import { db } from "../../db";
 import { publish } from "../../pubsub";
 import type { Actor } from "../bookings";
-import { ingestInbound } from "./ingest";
+import { assertSandboxEnabled, ingestInbound } from "./ingest";
 
-export { ingestInbound, applyStatus, storeInboundMedia } from "./ingest";
+export { ingestInbound, applyStatus, storeInboundMedia, assertSandboxEnabled, SandboxDisabledError } from "./ingest";
 
 /** Opening a chat clears its unread count. */
 export async function markRead(conversationId: string) {
@@ -49,6 +49,7 @@ export async function updateLead(conversationId: string, patch: LeadPatch, actor
  * history line up); without one it's a fresh customer. Thread id is a uuid (system design §7).
  */
 export async function createSandboxConversation(input: { name: string; phone?: string | null }, actor: Actor) {
+  assertSandboxEnabled();
   const phone = input.phone ?? null;
   const customer =
     (phone ? await db.customer.findUnique({ where: { phone } }) : null) ??
@@ -73,6 +74,7 @@ export async function listSandboxConversations() {
 
 /** Staff typing as the customer: the exact pipeline a WhatsApp message takes after its webhook. */
 export async function sandboxCustomerSays(conversationId: string, text: string) {
+  assertSandboxEnabled();
   const conv = await db.conversation.findUnique({ where: { id: conversationId }, select: { channel: true, externalThreadId: true } });
   if (!conv || conv.channel !== "SANDBOX") throw new Error("not a sandbox conversation");
   return ingestInbound({

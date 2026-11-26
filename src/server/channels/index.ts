@@ -33,6 +33,7 @@ export function getAdapter(channel: Channel): ChannelAdapter {
 /** Instagram sends are possible only with the flag on (or in dev, through the fake). */
 export function channelEnabled(channel: Channel): boolean {
   if (channel === "INSTAGRAM") return env.FEATURE_INSTAGRAM || !env.isProd;
+  if (channel === "SANDBOX") return env.FEATURE_SANDBOX;
   return channel !== "EMAIL";
 }
 

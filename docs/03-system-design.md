@@ -279,7 +279,7 @@ The client never sends a price the server trusts. Every price is re-derived on t
 - Prices move as integer paise. `sendQuote` quotes the engine's `quotePricePerPax` for the requested price (never above A), and writes nothing when `canQuote` refuses. A quote-card send needs the 24h window (it's free text); outside it the action is refused before any row is written.
 - `askOwner` keeps one open request per conversation (a newer ask expires the older). `suggestedPricePerPax` = the charm counter when the ask is below F, else the ask (capped at A). The request expires with the quote validity (`approval.expire`).
 - Staff may use an owner decision for the same conversation + departure + pax: `decidedPricePerPax` becomes their minimum.
-- Payment link from a quote: if the quote was authorised by the OWNER below L or F (AuditLog `quote.below_limit` / `quote.below_floor` on the Quote), the seat hold re-validates with the owner's authority, so staff can send the link. Sandbox chats book with source `WHATSAPP` (no `SANDBOX` source in the enum).
+- Payment link from a quote: if the quote was authorised by the OWNER below L or F (AuditLog `quote.below_limit` / `quote.below_floor` on the Quote), the seat hold re-validates with the owner's authority, so staff can send the link. Sandbox chats book with source `SANDBOX`, so demo deals never count as WhatsApp sales. The sandbox is behind `FEATURE_SANDBOX` (unset: on in development, off in production); when off, `/sandbox` and its actions 404 and `ingestInbound` refuses the `SANDBOX` channel.
 - Confirmations (DESK-6) go only to bookings with a `conversationId` (deals from chat). The invoice is sent once (`Document.sentAt`) and only inside the window.
 - The guardrail meter's scale is computed from role-visible values only, so for STAFF no marker position reveals the floor. Note: `L = max(F, A − s)`, so when `A − s < F` the staff limit staff see equals the floor.
 
@@ -363,6 +363,7 @@ interface ChannelAdapter {
 | `followups.scan` | cron `0 * * * *` | 1 | marks conversations "Follow-up due" (quote, no reply 20h); expires quotes past validity; **no automatic sends** in v1 |
 | `approval.expire` | delayed at `Approval.expiresAt` (quote validity) | 1 | status re-check (`PENDING` only) |
 | `notify.owner` | `askOwner` | 1 | jobId per approval; best-effort `owner_approval` template to each owner's `User.phone` |
+| `booking.confirm` | New booking sheet, "Send WhatsApp confirmation" ticked | 1 | jobId per booking + `payload.bookingConfirmation`; `booking_confirmed` template via outbound |
 | `tickets.windowReminders` | cron `*/5 * * * *` | 1 | marker per plan + reminder slot |
 | `campaign.send` | owner action | limiter | `CampaignRecipient` unique |
 | `campaign.attribute` | booking confirmed | 5 | idempotent update |

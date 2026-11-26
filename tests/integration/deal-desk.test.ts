@@ -121,6 +121,21 @@ describe("sendQuote guardrails", () => {
     expect(await db.quote.count({ where: { conversationId: d.conversationId } })).toBe(0);
   });
 
+  it("(f2) a second askOwner expires the earlier PENDING request (kept, never deleted)", async () => {
+    const d = await deal();
+    const first = await askOwner({ conversationId: d.conversationId, code: d.code, pax: 6, requestedPricePerPax: rupees(12_500) }, staff);
+    const second = await askOwner({ conversationId: d.conversationId, code: d.code, pax: 6, requestedPricePerPax: rupees(12_800) }, staff);
+    expect(second.approvalId).not.toBe(first.approvalId);
+    const rows = await db.approval.findMany({ where: { conversationId: d.conversationId }, orderBy: { createdAt: "asc" } });
+    expect(rows.map((r) => [r.id, r.status])).toEqual([
+      [first.approvalId, "EXPIRED"],
+      [second.approvalId, "PENDING"],
+    ]);
+    // The expired one can no longer be decided.
+    const err = await rejection(decideApproval({ approvalId: first.approvalId, action: "APPROVE" }, owner));
+    expect(err.code).toBe("APPROVAL_NOT_PENDING");
+  });
+
   it("(g) sendPaymentLink on an expired quote is rejected and nothing is queued", async () => {
     const d = await deal();
     const q = await sendQuote({ conversationId: d.conversationId, code: d.code, pax: 6, pricePerPax: rupees(13_499) }, staff);

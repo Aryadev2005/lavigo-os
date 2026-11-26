@@ -26,6 +26,7 @@ export const QUEUES = [
   "webhooks.sweep",
   "approval.expire",
   "notify.owner",
+  "booking.confirm",
 ] as const;
 
 export type QueueName = (typeof QUEUES)[number];

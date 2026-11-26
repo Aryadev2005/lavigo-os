@@ -17,6 +17,10 @@ const optionalString = z.preprocess(emptyToUndefined, z.string().optional());
 const boolString = z
   .preprocess(emptyToUndefined, z.enum(["true", "false", "1", "0"]).optional())
   .transform((v) => v === "true" || v === "1");
+/** Like boolString, but keeps "unset" so a default can depend on NODE_ENV. */
+const optionalBool = z
+  .preprocess(emptyToUndefined, z.enum(["true", "false", "1", "0"]).optional())
+  .transform((v) => (v === undefined ? undefined : v === "true" || v === "1"));
 
 const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
@@ -50,6 +54,8 @@ const schema = z.object({
   IG_ACCOUNT_ID: optionalString,
   IG_ACCESS_TOKEN: optionalString,
   FEATURE_INSTAGRAM: boolString,
+  /** INB-3 customer simulator. Unset → on outside production, off in production. */
+  FEATURE_SANDBOX: optionalBool,
 
   RAZORPAY_KEY_ID: optionalString,
   RAZORPAY_KEY_SECRET: optionalString,
@@ -60,7 +66,8 @@ const schema = z.object({
   SENTRY_DSN: optionalString,
 });
 
-type RawEnv = z.infer<typeof schema>;
+type ParsedEnv = z.infer<typeof schema>;
+type RawEnv = Omit<ParsedEnv, "FEATURE_SANDBOX"> & { FEATURE_SANDBOX: boolean };
 
 /** Keys each real adapter needs. Empty in dev/test → fake adapter. */
 const PROVIDER_KEYS = {
@@ -103,8 +110,8 @@ export function parseEnv(source: Record<string, string | undefined> = process.en
   if (!parsed.success) {
     throw new Error(`Invalid environment:\n${z.prettifyError(parsed.error)}`);
   }
-  const raw = parsed.data;
-  const isProd = raw.NODE_ENV === "production";
+  const isProd = parsed.data.NODE_ENV === "production";
+  const raw: RawEnv = { ...parsed.data, FEATURE_SANDBOX: parsed.data.FEATURE_SANDBOX ?? !isProd };
 
   const has = (k: keyof RawEnv) => raw[k] !== undefined && raw[k] !== "";
   const providers = {} as Record<Provider, ProviderMode>;

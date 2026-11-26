@@ -113,7 +113,8 @@ function approvalKindFor(result: PriceResult): ApprovalKind {
 }
 
 function sourceFor(channel: Channel): BookingSource {
-  // The sandbox simulates WhatsApp end to end (INB-3).
+  // Sandbox bookings keep their own source so demo deals never count as real WhatsApp sales.
+  if (channel === "SANDBOX") return "SANDBOX";
   if (channel === "INSTAGRAM") return "INSTAGRAM";
   return "WHATSAPP";
 }
