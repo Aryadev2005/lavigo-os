@@ -1,6 +1,6 @@
 /**
  * Run a scheduled job once: `make job name=reminders` (→ `pnpm job reminders`).
- * Phase 0: enqueues onto the named queue; the worker's processor handles it.
+ * Enqueues onto the named queue (same stack-scoped prefix as the worker); the worker runs it.
  */
 import { closeQueues, enqueue, QUEUES, type QueueName } from "../src/server/queue";
 
@@ -10,6 +10,7 @@ const ALIASES: Record<string, QueueName> = {
   nudges: "rfq.nudge",
   tickets: "tickets.windowReminders",
   prune: "maintenance.prune",
+  sweep: "webhooks.sweep",
 };
 
 async function main() {

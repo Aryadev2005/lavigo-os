@@ -8,14 +8,14 @@
  *
  * Side effects (invoice, activity, SSE, customer confirmation) run AFTER commit: see effects.ts.
  */
-import { Prisma, type Booking, type PaymentMethod, type PaymentPurpose, type PaymentProvider } from "@prisma/client";
+import { Prisma, type PaymentMethod, type PaymentPurpose, type PaymentProvider } from "@prisma/client";
 import { audit } from "../../audit";
 import { db, type Tx } from "../../db";
-import { divRound } from "../../money";
 import { getPaymentGateway, type PaymentGateway } from "../../payments/razorpay";
 import { confirmBookingInTx, TX_OPTS, type Actor } from "../bookings";
 import { holdSeats, lockBooking, SeatsUnavailable } from "../inventory";
 import { getSettings } from "../settings";
+import { linkAmount } from "./amounts";
 
 export class NothingToCollect extends Error {
   readonly code = "NOTHING_TO_COLLECT";
@@ -27,24 +27,7 @@ export class NothingToCollect extends Error {
 
 // ───────────────────────────── link amounts & creation (PAY-1) ─────────────────────────────
 
-/** Round half up to the whole rupee. */
-function roundToRupee(paise: number): number {
-  return divRound(paise, 100) * 100;
-}
-
-/**
- * ADVANCE = total × advancePct, rounded half-up to the rupee (capped at what's still owed).
- * BALANCE / FULL = whatever is still owed.
- */
-export function linkAmount(
-  booking: Pick<Booking, "totalAmount" | "paidAmount">,
-  purpose: PaymentPurpose,
-  advancePctBps: number,
-): number {
-  const owed = booking.totalAmount - booking.paidAmount;
-  if (purpose === "ADVANCE") return Math.min(owed, roundToRupee(divRound(booking.totalAmount * advancePctBps, 10_000)));
-  return owed;
-}
+export { advanceAmount, linkAmount, roundToRupee } from "./amounts";
 
 export type CreateLinkResult = { linkId: string; providerLinkId: string; shortUrl: string; amount: number; reused: boolean };
 

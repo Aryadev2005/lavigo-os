@@ -912,6 +912,32 @@ async function seedActivity(departures: Awaited<ReturnType<typeof seedCatalog>>[
   }
 }
 
+// ───────────────────────────── reminder history (P2) ─────────────────────────────
+
+/**
+ * What the reminders.daily job would already have done for the open bookings: one ReminderLog per
+ * rule whose fire date (due + offset) is before today. Gives the dues table real reminder counts
+ * (Meera Jha: 3 sent + flagged, as in the demo).
+ */
+async function seedReminderHistory() {
+  const rules = await db.reminderRule.findMany({ where: { enabled: true, anchor: "DUE_DATE" } });
+  const open = await db.booking.findMany({ where: { status: { in: ["HELD", "CONFIRMED"] }, balanceDueDate: { not: null } } });
+  for (const b of open) {
+    if (b.paidAmount >= b.totalAmount) continue;
+    for (const r of rules) {
+      const fireDay = addDays(b.balanceDueDate!, r.offsetDays);
+      if (fireDay >= TODAY) continue;
+      await db.reminderLog.create({
+        data: {
+          bookingId: b.id, ruleId: r.id, scheduledFor: fireDay, status: "SENT",
+          detail: r.action === "FLAG_OWNER" ? "flagged on Today" : `${r.templateName} (seed)`,
+          createdAt: istDateTime(istDateStringOf(fireDay), "10:00"),
+        },
+      });
+    }
+  }
+}
+
 // ───────────────────────────── main ─────────────────────────────
 
 async function main() {
@@ -929,6 +955,7 @@ async function main() {
   await seedSuppliers();
   await seedTravelPlans(departures, goa, Number(process.env.IRCTC_ARP_DAYS) || 60);
   await seedActivity(departures);
+  await seedReminderHistory();
 
   const counts = {
     users: await db.user.count(), customers: await db.customer.count(), departures: await db.departure.count(),

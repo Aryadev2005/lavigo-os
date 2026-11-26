@@ -83,3 +83,19 @@ export function greeting(now: Date = new Date()): string {
   if (h < 17) return "Good afternoon";
   return "Good evening";
 }
+
+/** The instant an IST calendar day starts (00:00 Asia/Kolkata). */
+export function istStartOfDay(calendarDate: Date): Date {
+  return istDateTime(istDateStringOf(calendarDate), "00:00");
+}
+
+/** First day of the IST calendar month containing `calendarDate`, shifted by `monthsBack`. */
+export function monthStart(calendarDate: Date, monthsBack = 0): Date {
+  return new Date(Date.UTC(calendarDate.getUTCFullYear(), calendarDate.getUTCMonth() - monthsBack, 1));
+}
+
+/** Monday of the IST calendar week containing `calendarDate`. */
+export function weekStart(calendarDate: Date): Date {
+  const dow = (calendarDate.getUTCDay() + 6) % 7; // Mon = 0
+  return addDays(calendarDate, -dow);
+}
