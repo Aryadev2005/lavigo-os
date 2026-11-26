@@ -162,6 +162,7 @@ model AgentSettings {
   balanceDueDaysBeforeTravel Int      @default(15)
   quoteValidityHours         Int      @default(24)
   charmEnding                Int      @default(99) // suggested counters end in ..99
+  stackOffers                Boolean  @default(false) // PRC-3: false = only the single largest eligible offer (Q6)
   gstRateBps                 Int      @default(500) // CONFIRM WITH CA — see SRS open questions
   gstin                      String?
   assistantName              String   @default("Lavigo Assistant")
