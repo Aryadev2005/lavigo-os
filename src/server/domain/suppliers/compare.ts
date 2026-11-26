@@ -37,3 +37,17 @@ export function savings(baseline: number | null, best: number | null, rooms: num
   const perRoomNight = baseline - best;
   return { perRoomNight, total: perRoomNight * rooms * nights, pctBps: toBps(perRoomNight, baseline) };
 }
+
+/** Rounding slack for a stated total: ₹1 (100 paise) per room-night. */
+export const TOTAL_TOLERANCE_PER_ROOM_NIGHT = 100;
+
+/** Does a stated total agree with rate × rooms × nights (within ₹1 per room-night)? All paise. */
+export function totalMatches(total: number, rate: number, rooms: number, nights: number): boolean {
+  const roomNights = rooms * nights;
+  return Math.abs(total - rate * roomNights) <= TOTAL_TOLERANCE_PER_ROOM_NIGHT * roomNights;
+}
+
+/** The amount to book/expense: the stated total only when it agrees with the rate, else rate × rooms × nights. */
+export function bookableTotal(q: { ratePerRoomNight: number; totalAmount: number }, rooms: number, nights: number): number {
+  return totalMatches(q.totalAmount, q.ratePerRoomNight, rooms, nights) ? q.totalAmount : q.ratePerRoomNight * rooms * nights;
+}

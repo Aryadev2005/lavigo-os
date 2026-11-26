@@ -5,7 +5,7 @@ import { z } from "zod";
 import { paiseFromRupeeInput } from "@/server/money";
 import { normalizePhone } from "@/server/phone";
 import { requireUser } from "@/server/rbac";
-import { addQuote, bookQuote, confirmQuote, createRfq, saveSupplier, sendVouchers, SupplierError } from "@/server/domain/suppliers";
+import { addQuote, bookQuote, confirmQuote, createRfq, saveSupplier, sendVouchers, SupplierError, undoDecline } from "@/server/domain/suppliers";
 import { logger } from "@/server/logger";
 
 export type ActionResult<T = object> = ({ ok: true } & T) | { ok: false; error: string };
@@ -112,6 +112,14 @@ export async function addQuoteAction(raw: z.input<typeof addQuoteInput>): Promis
   const paise = rupeesToPaise(v.rate);
   if (paise === null || Number.isNaN(paise)) return { ok: false, error: "Enter the rate per room per night" };
   return run(async () => ({ outcome: (await addQuote({ rfqId: v.rfqId, supplierId: v.supplierId, ratePerRoomNight: paise, inclusions: v.inclusions }, actor)).outcome }));
+}
+
+export async function undoDeclineAction(recipientId: string): Promise<ActionResult> {
+  const user = await requireUser();
+  return run(async () => {
+    await undoDecline(id.parse(recipientId), { id: user.id, role: user.role });
+    return {};
+  });
 }
 
 // ── SUP-7 book

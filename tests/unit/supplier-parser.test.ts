@@ -38,6 +38,32 @@ describe("parseSupplierReply", () => {
     if (c.total) expect(r.totalIfStated).toBe(rupees(c.total));
   });
 
+  it("ignores a stated total that doesn't equal rate × rooms × nights, and flags the quote", () => {
+    const r = parseSupplierReply("2150 per room, total 21500 for 10 rooms", ctx);
+    expect(r.ratePerRoomNight).toBe(rupees(2_150));
+    expect(r.totalIfStated).toBeNull();
+    expect(r.totalMismatch).toBe(true);
+    expect(r.confidence).toBeLessThan(HIGH_CONFIDENCE);
+  });
+
+  it("keeps a stated total that matches (10 rooms × 3 nights)", () => {
+    const r = parseSupplierReply("2150 per room, total 64500", ctx);
+    expect(r.level).toBe("high");
+    expect(r.ratePerRoomNight).toBe(rupees(2_150));
+    expect(r.totalIfStated).toBe(rupees(64_500));
+  });
+
+  it.each([
+    ["Sorry for the delay, will send rates by evening", false, null],
+    ["Full board available, rate tomorrow", false, "AP"],
+    ["Fully booked on those dates", true, null],
+  ] as const)("decline only on clear phrases: %s", (text, decline, mealPlan) => {
+    const r = parseSupplierReply(text, ctx);
+    expect(r.isDecline).toBe(decline);
+    expect(r.ratePerRoomNight).toBeNull();
+    expect(r.mealPlan).toBe(mealPlan);
+  });
+
   it("keeps the inclusions text the supplier wrote", () => {
     expect(parseSupplierReply("₹2.4k pn incl lachung night", ctx).inclusions).toBe("Incl. lachung night");
   });

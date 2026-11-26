@@ -20,7 +20,7 @@ import { inr } from "../../money";
 import { publish } from "../../pubsub";
 import { enqueue } from "../../queue";
 import { addDays, dateOnly, formatDate } from "../../time";
-import { HIGH_CONFIDENCE_BPS } from "./compare";
+import { bookableTotal, HIGH_CONFIDENCE_BPS } from "./compare";
 import { confidenceBps, parseSupplierReply } from "./parser";
 import { CATEGORY_LABEL, MEAL_PLAN_LABEL, SupplierError, type Actor } from "./common";
 
@@ -265,6 +265,20 @@ export async function handleSupplierReply(data: { messageId: string; supplierId:
   return recordReply(recipient, text, "AI_PARSED", msg.createdAt, "SUPPLIER");
 }
 
+/**
+ * One current quote per supplier: a new quote supersedes the recipient's RECEIVED ones (kept as
+ * REJECTED for history), so compare / best / savings never see two rates from the same supplier.
+ */
+async function createCurrentQuote(
+  recipientId: string,
+  data: { ratePerRoomNight: number; totalAmount: number; inclusions: string | null; rawText: string; source: "AI_PARSED" | "MANUAL"; confidenceBps: number | null },
+) {
+  return db.$transaction(async (tx) => {
+    await tx.supplierQuote.updateMany({ where: { recipientId, status: "RECEIVED" }, data: { status: "REJECTED" } });
+    return tx.supplierQuote.create({ data: { recipientId, ...data } });
+  });
+}
+
 type RecipientCtx = { id: string; rfqId: string; repliedAt: Date | null; rfq: { rooms: number; nights: number; destination: string }; supplier: { name: string } };
 
 async function recordReply(recipient: RecipientCtx, text: string, source: "AI_PARSED", at: Date, actorType: "USER" | "SUPPLIER") {
@@ -275,18 +289,22 @@ async function recordReply(recipient: RecipientCtx, text: string, source: "AI_PA
     await rfqUpdated(recipient.rfqId);
     return { outcome: "declined" as const };
   }
-  const rate = parsed.ratePerRoomNight ?? 0;
+  // Chatter ("will send rates by evening"): no quote, no status change, nudges continue. The
+  // message itself is already stored and shows as "Latest: …" on the supplier's row.
+  if (parsed.ratePerRoomNight === null) {
+    await rfqUpdated(recipient.rfqId);
+    return { outcome: "chatter" as const };
+  }
+  const rate = parsed.ratePerRoomNight;
   const roomNights = recipient.rfq.rooms * recipient.rfq.nights;
-  const quote = await db.supplierQuote.create({
-    data: {
-      recipientId: recipient.id,
-      ratePerRoomNight: rate,
-      totalAmount: parsed.totalIfStated ?? rate * roomNights,
-      inclusions: parsed.inclusions,
-      rawText: text.slice(0, 4000),
-      source,
-      confidenceBps: confidenceBps(parsed.confidence),
-    },
+  // parseSupplierReply only keeps a stated total that equals rate × rooms × nights (±₹1/room-night).
+  const quote = await createCurrentQuote(recipient.id, {
+    ratePerRoomNight: rate,
+    totalAmount: parsed.totalIfStated ?? rate * roomNights,
+    inclusions: parsed.inclusions,
+    rawText: text.slice(0, 4000),
+    source,
+    confidenceBps: confidenceBps(parsed.confidence),
   });
   await db.rfqRecipient.update({ where: { id: recipient.id }, data: { status: "REPLIED", repliedAt: recipient.repliedAt ?? at } });
   const flagged = quote.confidenceBps! < HIGH_CONFIDENCE_BPS;
@@ -336,24 +354,36 @@ export async function addQuote(
   });
   const ctx = { ...recipient, rfq, supplier };
   await audit({ userId: actor.id, action: "supplier_quote.add", entityType: "Rfq", entityId: rfq.id, after: { supplierId: supplier.id, pasted: "text" in input } });
-  if ("text" in input) return recordReply(ctx, input.text, "AI_PARSED", new Date(), "USER");
+  if ("text" in input) {
+    const r = await recordReply(ctx, input.text, "AI_PARSED", new Date(), "USER");
+    if (r.outcome === "chatter") throw new SupplierError("INVALID", "No rate found in that text. Type the rate instead.");
+    return r;
+  }
 
   if (!Number.isSafeInteger(input.ratePerRoomNight) || input.ratePerRoomNight <= 0) throw new SupplierError("INVALID", "Enter the rate per room per night");
-  const quote = await db.supplierQuote.create({
-    data: {
-      recipientId: recipient.id,
-      ratePerRoomNight: input.ratePerRoomNight,
-      totalAmount: input.ratePerRoomNight * rfq.rooms * rfq.nights,
-      inclusions: input.inclusions || null,
-      rawText: `Typed by staff: ${inr(input.ratePerRoomNight)}/room/night${input.inclusions ? ` · ${input.inclusions}` : ""}`,
-      source: "MANUAL",
-      confidenceBps: null,
-    },
+  const quote = await createCurrentQuote(recipient.id, {
+    ratePerRoomNight: input.ratePerRoomNight,
+    totalAmount: input.ratePerRoomNight * rfq.rooms * rfq.nights,
+    inclusions: input.inclusions || null,
+    rawText: `Typed by staff: ${inr(input.ratePerRoomNight)}/room/night${input.inclusions ? ` · ${input.inclusions}` : ""}`,
+    source: "MANUAL",
+    confidenceBps: null,
   });
   await db.rfqRecipient.update({ where: { id: recipient.id }, data: { status: "REPLIED", repliedAt: recipient.repliedAt ?? new Date() } });
   await activity("🏨", `${supplier.name} quoted ${inr(input.ratePerRoomNight)}/room/night for ${rfq.destination} (added by hand)`, "supplier.replied", rfq.id);
   await rfqUpdated(rfq.id);
   return { outcome: "quoted" as const, quoteId: quote.id };
+}
+
+/** "Undo decline": the parser (or a supplier's wording) got it wrong; back to waiting. Audited. */
+export async function undoDecline(recipientId: string, actor: Actor) {
+  const r = await db.rfqRecipient.findUnique({ where: { id: recipientId }, include: { rfq: { select: { status: true } }, supplier: { select: { name: true } } } });
+  if (!r) throw new SupplierError("NOT_FOUND", "Supplier not found on this request");
+  if (r.rfq.status !== "SENT") throw new SupplierError("ALREADY_BOOKED", "This request is already booked");
+  const { count } = await db.rfqRecipient.updateMany({ where: { id: r.id, status: "DECLINED" }, data: { status: "SENT" } });
+  if (!count) throw new SupplierError("INVALID", `${r.supplier.name} isn't marked as declined`);
+  await audit({ userId: actor.id, action: "rfq_recipient.undo_decline", entityType: "RfqRecipient", entityId: r.id, before: { status: "DECLINED" }, after: { status: "SENT" } });
+  await rfqUpdated(r.rfqId);
 }
 
 // ───────────────────────────── 6.6 book (SUP-7) ─────────────────────────────
@@ -364,6 +394,7 @@ export async function bookQuote(quoteId: string, actor: Actor) {
     if (!q) throw new SupplierError("NOT_FOUND", "Quote not found");
     const { rfq, supplier } = q.recipient;
     if (q.recipient.status === "DECLINED") throw new SupplierError("DECLINED", `${supplier.name} declined this request`);
+    if (q.status !== "RECEIVED") throw new SupplierError("INVALID", "This quote was replaced by a newer one");
     if (q.ratePerRoomNight <= 0 || (q.confidenceBps !== null && q.confidenceBps < HIGH_CONFIDENCE_BPS)) {
       throw new SupplierError("NEEDS_CHECK", "Confirm the rate first");
     }
@@ -371,7 +402,9 @@ export async function bookQuote(quoteId: string, actor: Actor) {
     const claimed = await tx.rfq.updateMany({ where: { id: rfq.id, status: "SENT" }, data: { status: "BOOKED" } });
     if (!claimed.count) throw new SupplierError("ALREADY_BOOKED", "This request is already booked");
     const now = new Date();
-    await tx.supplierQuote.update({ where: { id: q.id }, data: { status: "BOOKED", bookedAt: now } });
+    // Always book rate × rooms × nights (a stated total only when it agrees within ₹1/room-night).
+    const amount = bookableTotal(q, rfq.rooms, rfq.nights);
+    await tx.supplierQuote.update({ where: { id: q.id }, data: { status: "BOOKED", bookedAt: now, totalAmount: amount } });
     await tx.supplierQuote.updateMany({ where: { recipient: { rfqId: rfq.id }, id: { not: q.id }, status: "RECEIVED" }, data: { status: "REJECTED" } });
     const expense = await tx.expense.create({
       data: {
@@ -379,14 +412,14 @@ export async function bookQuote(quoteId: string, actor: Actor) {
         supplierId: supplier.id,
         supplierQuoteId: q.id,
         category: "HOTEL",
-        amount: q.totalAmount,
+        amount,
         description: `${supplier.name} · ${rfq.rooms} rooms × ${rfq.nights} nights · ${rfq.destination}, check-in ${formatDate(rfq.checkIn, "d MMM yyyy")}`,
         incurredOn: rfq.checkIn,
         createdById: actor.id,
       },
     });
-    await audit({ userId: actor.id, action: "rfq.book", entityType: "Rfq", entityId: rfq.id, after: { quoteId: q.id, expenseId: expense.id, amount: q.totalAmount } }, tx);
-    return { rfq, supplier, quote: q, expense };
+    await audit({ userId: actor.id, action: "rfq.book", entityType: "Rfq", entityId: rfq.id, after: { quoteId: q.id, expenseId: expense.id, amount } }, tx);
+    return { rfq, supplier, quote: { ...q, totalAmount: amount }, expense };
   });
   await enqueue("rfq.send", { recipientId: result.quote.recipientId, kind: "confirm", quoteId: result.quote.id }, { jobId: `rfq-confirm-${result.quote.id}` });
   await activity("🏨", `Booked ${result.supplier.name} for ${result.rfq.destination}, ${formatDate(result.rfq.checkIn)} · ${inr(result.quote.totalAmount)}`, "rfq.booked", result.rfq.id);

@@ -5,7 +5,7 @@
  */
 import { useRouter } from "next/navigation";
 import { useState, useTransition } from "react";
-import { addQuoteAction, bookQuoteAction, confirmQuoteAction } from "@/app/(app)/supplier/actions";
+import { addQuoteAction, bookQuoteAction, confirmQuoteAction, undoDeclineAction } from "@/app/(app)/supplier/actions";
 import { useToast } from "@/components/shell/toast";
 import type { QuoteRowView, RfqView } from "@/server/domain/suppliers/queries";
 import { inr } from "@/server/money";
@@ -77,16 +77,51 @@ function Row({ row, rfq }: { row: QuoteRowView; rfq: RfqView }) {
   const name = (
     <td>
       <b>{row.supplierName}</b>
+      {row.updated ? (
+        <span className="pill p-l" style={{ marginLeft: 6, fontSize: 10.5 }} title="They sent a newer quote; the earlier one is kept as history">
+          updated
+        </span>
+      ) : null}
       {q?.inclusions && !q.needsCheck ? (
         <>
           <br />
           <small className="muted">{q.inclusions}</small>
         </>
       ) : null}
+      {row.latest ? (
+        <>
+          <br />
+          <small className="muted">
+            Latest: &lsquo;{row.latest.text}&rsquo; · {row.latest.ago}
+          </small>
+        </>
+      ) : null}
     </td>
   );
   let cells: React.ReactNode;
-  if (row.status === "DECLINED") cells = <td colSpan={4} className="muted">Declined · can&apos;t do these dates</td>;
+  if (row.status === "DECLINED")
+    cells = (
+      <td colSpan={4} className="muted">
+        Declined · can&apos;t do these dates{" "}
+        {!booked ? (
+          <button
+            type="button"
+            className="btn b2 sm"
+            style={{ marginLeft: 8 }}
+            disabled={pending}
+            onClick={() =>
+              start(async () => {
+                const r = await undoDeclineAction(row.recipientId);
+                if (!r.ok) toast(r.error, "⚠️");
+                else router.refresh();
+              })
+            }
+          >
+            Undo decline
+          </button>
+        ) : null}
+      </td>
+    );
   else if (q && q.needsCheck) cells = <NeedsCheck row={row} disabled={booked} />;
   else if (q) {
     cells = (

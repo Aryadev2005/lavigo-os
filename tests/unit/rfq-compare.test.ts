@@ -1,6 +1,6 @@
 /** SUP-6: best quote and savings vs the baseline, in paise. */
 import { describe, expect, it } from "vitest";
-import { bestRow, savings } from "@/server/domain/suppliers/compare";
+import { bestRow, bookableTotal, savings, totalMatches } from "@/server/domain/suppliers/compare";
 import { rupees } from "@/server/money";
 
 const row = (id: string, rate: number | null, opts: { declined?: boolean; confidenceBps?: number | null } = {}) => ({
@@ -50,5 +50,19 @@ describe("savings", () => {
     expect(savings(null, rupees(2_150), 10, 3)).toBeNull();
     expect(savings(rupees(2_000), rupees(2_150), 10, 3)).toBeNull();
     expect(savings(rupees(2_150), null, 10, 3)).toBeNull();
+  });
+});
+
+describe("stated totals", () => {
+  it("match within ₹1 per room-night of rate × rooms × nights", () => {
+    expect(totalMatches(rupees(64_500), rupees(2_150), 10, 3)).toBe(true);
+    expect(totalMatches(rupees(64_530), rupees(2_150), 10, 3)).toBe(true); // +₹30 over 30 room-nights
+    expect(totalMatches(rupees(64_531), rupees(2_150), 10, 3)).toBe(false);
+    expect(totalMatches(rupees(21_500), rupees(2_150), 10, 3)).toBe(false);
+  });
+
+  it("the bookable amount is always consistent with the rate", () => {
+    expect(bookableTotal({ ratePerRoomNight: rupees(2_150), totalAmount: rupees(21_500) }, 10, 3)).toBe(rupees(64_500));
+    expect(bookableTotal({ ratePerRoomNight: rupees(2_150), totalAmount: rupees(64_510) }, 10, 3)).toBe(rupees(64_510));
   });
 });

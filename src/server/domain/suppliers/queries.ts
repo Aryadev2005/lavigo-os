@@ -106,6 +106,10 @@ export type QuoteRowView = {
     candidates: number[];
   } | null;
   best: boolean;
+  /** The supplier sent a newer quote that replaced an earlier one. */
+  updated: boolean;
+  /** Their latest message when it isn't the quote shown (chatter, a decline, a question). */
+  latest: { text: string; ago: string } | null;
 };
 
 export type RfqView = {
@@ -140,13 +144,23 @@ export async function getRfqView(rfqId: string, now: Date = new Date()): Promise
     include: {
       departure: { select: { code: true } },
       recipients: {
-        include: { supplier: { select: { name: true } }, quotes: { orderBy: { createdAt: "desc" }, take: 1 } },
+        include: { supplier: { select: { name: true } }, quotes: { orderBy: { createdAt: "desc" }, take: 1 }, _count: { select: { quotes: true } } },
         orderBy: { supplier: { name: "asc" } },
       },
     },
   });
   if (!rfq) return null;
   const ctx = { rooms: rfq.rooms, nights: rfq.nights };
+
+  // Latest inbound WhatsApp message per supplier since the request went out.
+  const msgs = await db.message.findMany({
+    where: { direction: "INBOUND", createdAt: { gte: rfq.sentAt ?? rfq.createdAt }, conversation: { supplierId: { in: rfq.recipients.map((r) => r.supplierId) } } },
+    orderBy: { createdAt: "desc" },
+    select: { body: true, createdAt: true, conversation: { select: { supplierId: true } } },
+    take: 200,
+  });
+  const latestBySupplier = new Map<string, { body: string; createdAt: Date }>();
+  for (const m of msgs) if (m.conversation.supplierId && !latestBySupplier.has(m.conversation.supplierId)) latestBySupplier.set(m.conversation.supplierId, m);
 
   const rows: QuoteRowView[] = rfq.recipients.map((r) => {
     const q = r.quotes[0] ?? null;
@@ -174,6 +188,12 @@ export async function getRfqView(rfqId: string, now: Date = new Date()): Promise
           }
         : null,
       best: false,
+      updated: r._count.quotes > 1 && !!q && q.status !== "REJECTED",
+      latest: (() => {
+        const m = latestBySupplier.get(r.supplierId);
+        if (!m?.body || (q && q.rawText === m.body.slice(0, 4000))) return null;
+        return { text: m.body.length > 120 ? `${m.body.slice(0, 117)}…` : m.body, ago: `${duration(now.getTime() - m.createdAt.getTime())} ago` };
+      })(),
     };
   });
 

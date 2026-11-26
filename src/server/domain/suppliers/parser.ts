@@ -5,6 +5,7 @@
  * Amounts come back in paise (CLAUDE.md money rule); confidence is a 0–1 score.
  */
 import type { MealPlan } from "@prisma/client";
+import { totalMatches } from "./compare";
 
 export type RfqContext = { rooms: number; nights: number };
 
@@ -22,12 +23,16 @@ export type ParsedSupplierReply = {
   level: "high" | "medium" | "low";
   /** Paise per room-night: one-click choices for a "needs check" quote. */
   candidates: number[];
+  /** A total was stated but didn't equal rate × rooms × nights, so it was ignored. */
+  totalMismatch?: boolean;
 };
 
 export const HIGH_CONFIDENCE = 0.8;
 const TOTAL_ONLY_CONFIDENCE = 0.6;
 const AMBIGUOUS_CONFIDENCE = 0.4;
 const SINGLE_UNLABELLED_CONFIDENCE = 0.5;
+/** A clear rate whose stated total doesn't add up: kept, but flagged for a check. */
+const TOTAL_MISMATCH_CONFIDENCE = 0.7;
 
 /** Plausible per-room-night range (₹500–₹50,000). */
 const MIN_RATE = 500;
@@ -42,7 +47,8 @@ const KEYWORDS: { kind: Kind; re: RegExp }[] = [
   { kind: "other", re: /\bextra\b|\bcab\b|\bcar\b|\btaxi\b|\btransfer\b|\bgst\b|\btax\b|\bdeposit\b|\badvance\b/g },
 ];
 
-const DECLINE = /\bsorry\b|not\s+available|\bunavailable\b|sold\s*out|\bfull(y)?\b|no\s+rooms?\b|\bregret\b|can'?t\s+(do|accommodate)/;
+/** Clear decline phrases only: "sorry for the delay" or "full board" are not declines. */
+const DECLINE = /fully\s+booked|\bno\s+rooms?\b|\bno\s+availability\b|\bnot\s+available\b|\bsold\s*out\b|\bhouse\s*full\b|\b(?:can'?t|cannot|can\s+not)\s+accommodate\b|\bregret\b/;
 
 const MONTHS = "jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec";
 
@@ -143,14 +149,20 @@ export function parseSupplierReply(text: string, rfqContext: RfqContext): Parsed
   const totals = found.filter((a) => a.kind === "total");
   const rates = found.filter((a) => a.kind !== "total" && inRange(a.value));
   const strong = rates.filter((a) => a.kind === "strong");
-  const totalIfStated = totals.length === 1 ? paise(totals[0]!.value) : null;
+  const stated1 = totals.length === 1 ? paise(totals[0]!.value) : null;
+  /** Keep a stated total only when it agrees with rate × the RFQ's rooms × nights. */
+  const checkTotal = (rate: number) => (stated1 === null ? { totalIfStated: null, mismatch: false } : totalMatches(stated1, rate, rfqContext.rooms, rfqContext.nights) ? { totalIfStated: stated1, mismatch: false } : { totalIfStated: null, mismatch: true });
 
   // Step 3: a decline only when there's no rate to consider.
   if (DECLINE.test(norm) && rates.length === 0 && totals.length === 0) return none(true);
 
   // Step 4: exactly one strongly-labelled plausible rate, and nothing else unexplained.
   if (strong.length === 1 && rates.length === 1) {
-    return { ...base, totalIfStated, ratePerRoomNight: paise(strong[0]!.value), isDecline: false, confidence: 0.9, level: "high", candidates: [paise(strong[0]!.value)] };
+    const rate = paise(strong[0]!.value);
+    const t = checkTotal(rate);
+    return t.mismatch
+      ? { ...base, totalIfStated: null, totalMismatch: true, ratePerRoomNight: rate, isDecline: false, confidence: TOTAL_MISMATCH_CONFIDENCE, level: "medium", candidates: [rate] }
+      : { ...base, totalIfStated: t.totalIfStated, ratePerRoomNight: rate, isDecline: false, confidence: 0.9, level: "high", candidates: [rate] };
   }
 
   // Step 5: only a total → divide by rooms × nights, flagged at medium confidence.
@@ -159,18 +171,21 @@ export function parseSupplierReply(text: string, rfqContext: RfqContext): Parsed
     const roomNights = stated(norm, "room", rfqContext.rooms) * stated(norm, "night", rfqContext.nights);
     const rate = roomNights > 0 ? Math.round(total / roomNights) : NaN;
     if (inRange(rate)) {
-      return { ...base, totalIfStated: paise(total), ratePerRoomNight: paise(rate), isDecline: false, confidence: TOTAL_ONLY_CONFIDENCE, level: "medium", candidates: [paise(rate)] };
+      const t = checkTotal(paise(rate));
+      return { ...base, totalIfStated: t.totalIfStated, totalMismatch: t.mismatch, ratePerRoomNight: paise(rate), isDecline: false, confidence: TOTAL_ONLY_CONFIDENCE, level: "medium", candidates: [paise(rate)] };
     }
   }
 
-  if (rates.length === 0) return { ...none(false), totalIfStated };
+  // No usable amount (chatter, or only an implausible total): nothing to quote.
+  if (rates.length === 0) return none(false);
 
   // Ambiguous: offer every plausible amount, best guess first (strong before others, then text order).
   const ordered = [...strong, ...rates.filter((a) => a.kind !== "strong")];
   const candidates = [...new Set(ordered.map((a) => paise(a.value)))];
   const single = rates.length === 1;
   const confidence = single ? SINGLE_UNLABELLED_CONFIDENCE : AMBIGUOUS_CONFIDENCE;
-  return { ...base, totalIfStated, ratePerRoomNight: candidates[0]!, isDecline: false, confidence, level: single ? "medium" : "low", candidates };
+  const t = checkTotal(candidates[0]!);
+  return { ...base, totalIfStated: t.totalIfStated, totalMismatch: t.mismatch, ratePerRoomNight: candidates[0]!, isDecline: false, confidence, level: single ? "medium" : "low", candidates };
 }
 
 /** confidence (0–1) → SupplierQuote.confidenceBps. */
