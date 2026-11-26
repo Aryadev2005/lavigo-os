@@ -1,23 +1,16 @@
-/** Counts for the sidebar badges. Cheap aggregate queries; no stored counters. */
+/** Counts for the sidebar badges (TOD-7). Live queries; no stored counters. */
 import { db } from "@/server/db";
-import { todayIST } from "@/server/time";
+import { getDuesBoard } from "@/server/domain/dues";
+import { waitingConversations } from "./index";
 
 export type NavBadgeCounts = { inbox: number; dues: number };
 
 export async function getNavBadges(now: Date = new Date()): Promise<NavBadgeCounts> {
-  const [inbox, dues] = await Promise.all([
-    // Conversations waiting on the team: unread, or brand new.
-    db.conversation.count({
-      where: { customerId: { not: null }, OR: [{ unreadCount: { gt: 0 } }, { status: "NEW" }] },
-    }),
-    // Bookings whose balance due date has passed with money still owed.
-    db.booking.count({
-      where: {
-        status: { in: ["HELD", "CONFIRMED"] },
-        balanceDueDate: { lt: todayIST(now) },
-        paidAmount: { lt: db.booking.fields.totalAmount },
-      },
-    }),
+  const [waiting, approvals, dues] = await Promise.all([
+    // Unanswered: the customer spoke last (any age).
+    waitingConversations(now),
+    db.approval.count({ where: { status: "PENDING" } }),
+    getDuesBoard(now),
   ]);
-  return { inbox, dues };
+  return { inbox: waiting.length + approvals, dues: dues.lateCount };
 }
