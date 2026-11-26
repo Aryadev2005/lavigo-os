@@ -4,7 +4,8 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { initials } from "@/lib/utils";
-import { BellIcon, SearchIcon } from "./icons";
+import { GlobalSearch } from "./global-search";
+import { BellIcon } from "./icons";
 import { PAGE_META, type PageMeta } from "./pages";
 
 export function TopBar({
@@ -37,10 +38,7 @@ export function TopBar({
         <div className="sub">{meta.subtitle}</div>
       </div>
       <div className="r">
-        <label className="search">
-          <SearchIcon />
-          <input placeholder="Search customer, booking, phone" aria-label="Search" />
-        </label>
+        <GlobalSearch />
         <Link className="ib" href="/today" title="Needs you" aria-label="Needs you">
           <BellIcon />
           <i />
