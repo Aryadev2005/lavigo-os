@@ -1,6 +1,8 @@
 # Lavigo OS: notes for the coding agent
 
-Lavigo OS is an owner and staff operating system for Lavigo Travel Co. (Ranchi). It covers an AI sales inbox on WhatsApp and Instagram, bookings, payments and dues, a supplier rate desk, a tickets desk, departures and campaigns, profit, and AI rules.
+Lavigo OS is an owner and staff operating system for Lavigo Travel Co. (Ranchi). It covers a shared WhatsApp and Instagram inbox with a deal desk (quotes, owner approvals, payment links), bookings, payments and dues, a supplier rate desk, a tickets desk, departures and campaigns, profit, and pricing rules.
+
+**v1 has NO AI/LLM features.** The AI sales agent and every LLM use are v2 (SRS §1.1). Where the demo says "AI", v1 is staff-operated or rule-based.
 
 ## Read first
 
@@ -66,19 +68,12 @@ All of these run inside containers.
 - **Schema changes** are additive migrations only. Never edit an applied migration. If you are one of several parallel sessions, don't change existing models without saying so in your summary.
 - **Tests:** write only the ones that protect money, seats, security or the guardrail (see `docs/03-system-design.md` §13). Don't write snapshot tests or trivial UI tests.
 
-## Claude API usage (`src/server/llm`, `src/server/agent`)
+## AI / LLM: v2 only (do not build in v1)
 
-- Use the official `@anthropic-ai/sdk`. The model comes from `env.AI_MODEL` (default `claude-opus-5-5`), effort from `env.AI_EFFORT`.
-- **Do not** send `thinking: {type:"disabled"}` or `budget_tokens`. Both return a 400 on this model.
-- **Do not** force `tool_choice` with `any` or `tool`; that is also a 400. Use `auto`, put `strict: true` on tools, and use schemas with `additionalProperties: false`.
-- Do not use assistant prefill.
-- Use `cache_control` on the frozen system prompt.
-- Enable server-side refusal fallbacks: `client.beta.messages.create({... betas:["server-side-fallback-2026-07-01"], fallbacks:"default"})`.
-- Check `stop_reason` before reading `content`: `tool_use`, `end_turn`, `max_tokens`, `refusal`.
-- Return **all** `tool_result` blocks in a single user message. Parse tool input as JSON and validate it with zod.
-- For operator events (an owner decision, a payment), append a `{role:"system"}` message after the latest user turn. Never mix them into customer text.
-- Use structured output (`client.messages.parse` with `zodOutputFormat`) for supplier-quote parsing.
-- Tests use the fake client in `src/server/llm/fake.ts`. CI makes no live API calls.
+- Do **not** add `@anthropic-ai/sdk` or any LLM dependency. Add no `ANTHROPIC_*` or `AI_*` env vars, and create no `src/server/agent` or `src/server/llm` directories.
+- AI-only schema fields and tables (`AgentRun`, `AgentStep`, `Conversation.aiMode`, `AgentSettings` AI toggles) stay in the schema, **unused**. Don't remove them and don't write to them.
+- Build v1 so v2 can plug in. Quote, approval and payment-link logic lives in `src/server/domain/deals` as plain functions that a future agent tool can call. The supplier parser keeps the signature `parseSupplierReply(text, rfqContext)`.
+- The v2 design is in `docs/03-system-design.md` Appendix A. It's for reference only.
 
 ## Style
 

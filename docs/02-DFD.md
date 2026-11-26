@@ -11,6 +11,8 @@ The diagrams use Mermaid, which GitHub renders natively. The notation follows Yo
 
 Store numbering is shared across levels, so `D4 Bookings` is the same store everywhere.
 
+**Release scope:** these diagrams show **v1** (no AI/LLM, per SRS §1.1). Process 2.0 is the staff-operated **Deal Desk**. The v2 AI agent and LLM flows are in the appendix at the end; in v2 the AI agent joins 2.0 as a second actor that calls the same functions.
+
 ---
 
 ## Level 0 — Context diagram
@@ -24,7 +26,6 @@ flowchart LR
   SUP[Supplier<br/>hotels · agents · DMCs]
   META[Meta Platform<br/>WhatsApp Cloud API · Instagram]
   RZP[Razorpay]
-  LLM[Anthropic Claude API]
   MAIL[Email provider SMTP]
   OBJ[Object storage S3]
   IRCTC[IRCTC / B2B portal<br/>manual, human-operated]
@@ -43,13 +44,11 @@ flowchart LR
   RZP -- signed payment webhooks --> SYS
   CUS -- UPI / card payment --> RZP
 
-  SYS -- conversation context, tool results --> LLM
-  LLM -- replies, tool calls, parsed quotes --> SYS
 
   SYS -- PDFs, media, backups --> OBJ
   OBJ -- signed file URLs --> SYS
 
-  OWN -- rules, approvals, bookings, RFQs, fares, PNRs --> SYS
+  OWN -- replies, quotes, approvals, rules, bookings, RFQs, fares, PNRs --> SYS
   SYS -- dashboard, alerts, approvals, reports --> OWN
   OWN -- books tickets by hand --> IRCTC
   IRCTC -- PNRs, ticket PDFs --> OWN
@@ -66,11 +65,10 @@ flowchart TB
   OWN[Owner / Staff]
   META[Meta Platform]
   RZP[Razorpay]
-  LLM[Claude API]
   MAIL[Email]
 
   P1(1.0<br/>Channel Gateway)
-  P2(2.0<br/>AI Sales Agent)
+  P2(2.0<br/>Deal Desk<br/>staff quotes & approvals)
   P3(3.0<br/>Pricing & Guardrail Engine)
   P4(4.0<br/>Booking & Inventory)
   P5(5.0<br/>Payments & Dues)
@@ -103,9 +101,8 @@ flowchart TB
   P1 -- customer message event --> D11
   P1 -- supplier reply --> P6
 
-  D11 -- agent.reply job --> P2
-  P2 -- context + tools --> LLM
-  LLM -- reply / tool calls --> P2
+  D2 -- conversation, lead --> P2
+  OWN -- replies, quote requests, ask owner --> P2
   P2 -- price question --> P3
   P3 -- decision, allowed price --> P2
   D6 -- rules, offers --> P3
@@ -114,11 +111,10 @@ flowchart TB
   P2 -- hold seats --> P4
   P2 -- payment link request --> P5
   P2 -- reply text --> P1
-  P2 -- run & step audit --> D2
 
   D12 -- pending approvals --> OWN
   OWN -- approve / counter / decline --> D12
-  D12 -- decision event --> D11
+  D12 -- approved price --> P2
 
   P4 -- bookings, travellers --> D4
   D3 -- seat counts --> P4
@@ -135,7 +131,6 @@ flowchart TB
   P6 -- rate requests --> P1
   P6 -- emails --> MAIL
   MAIL --> SUP
-  P6 -- parse reply --> LLM
   P6 -- RFQs, quotes --> D7
   P6 -- booked hotel cost --> D14
 
@@ -165,12 +160,12 @@ flowchart TB
 
 | # | Process | Inputs | Outputs | Stores |
 |---|---|---|---|---|
-| 1.0 | **Channel Gateway**: verifies, normalises and routes inbound messages; sends outbound with 24h-window and template policy | Meta webhooks, outbound requests from 2/5/6/7/8 | Normalised messages, jobs, provider sends | D1, D2, D10, D11 |
-| 2.0 | **AI Sales Agent**: Claude tool-use loop for one conversation | `agent.reply` job, approval decisions, payment events | Replies, quotes, approvals, held bookings, payment-link requests | D2, D12 |
+| 1.0 | **Channel Gateway**: verifies, normalises and routes inbound messages; sends outbound with 24h-window and template policy | Meta webhooks, outbound requests from 2/5/6/7/8 | Normalised messages, SSE events, provider sends | D1, D2, D10, D11 |
+| 2.0 | **Deal Desk**: staff replies, quote builder, ask-owner approvals, payment link from chat *(v2: the AI agent also drives it)* | Staff/owner actions, approval decisions, conversation state | Replies, quotes, approvals, held bookings, payment-link requests | D2, D12 |
 | 3.0 | **Pricing & Guardrail Engine**: a pure function, the single source of price truth | Departure, pax, customer, rules, requested price | Decision, allowed price, suggested counter | reads D3, D6, D4 |
 | 4.0 | **Booking & Inventory**: seat holds, booking lifecycle, travellers | Agent or staff booking requests, payment confirmations, hold expiry | Bookings, seat counts | D3, D4 |
 | 5.0 | **Payments & Dues**: links, webhooks, invoices, reminders | Link requests, Razorpay webhooks, daily scheduler | Payments, invoices, reminders, confirmations | D4, D5, D10 |
-| 6.0 | **Supplier Procurement**: RFQ fan-out, reply parsing, compare, book | Owner RFQ, supplier replies | Quotes, bookings, expenses | D7, D14 |
+| 6.0 | **Supplier Procurement**: RFQ fan-out, rule-based reply parsing, compare, book | Owner RFQ, supplier replies | Quotes, bookings, expenses | D7, D14 |
 | 7.0 | **Tickets Planning**: landed-cost ranking, fare trend, booking window, PNR split | Options and fares entered by staff, travellers | Rankings, alerts, ticket groups | D8, D4, D14 |
 | 8.0 | **Departures & Campaigns**: catalog, fill-seats audiences, sends, attribution | Owner input, customers, bookings | Departures, campaigns | D3, D13 |
 | 9.0 | **Dashboard & Reporting**: KPIs, Needs-you, live feed, profit | All stores (read-only) | Views, SSE events | reads all |
@@ -195,7 +190,8 @@ flowchart LR
   D10[(D10 Object Storage)]
   D11[(D11 Job Queue)]
   WH[(WebhookEvent)]
-  P2(2.0 AI Agent)
+  P2(2.0 Deal Desk)
+  STF[Staff / Owner]
   P6(6.0 Supplier Procurement)
   SRC[Processes 2,5,6,7,8]
 
@@ -210,8 +206,8 @@ flowchart LR
   D7 -- supplier phones --> P13
   P13 -- upsert customer --> D1
   P13 -- supplier message --> P6
-  P13 -- customer message → agent.reply (debounced) --> D11
-  D11 --> P2
+  P13 -- customer message, SSE --> STF
+  STF --> P2
   P12 -- media id --> P14
   P14 -- file --> D10
   SRC -- send request --> P15
@@ -222,53 +218,55 @@ flowchart LR
   P16 -- wamid, SENT/FAILED --> D2
 ```
 
-## Level 2 — 2.0 AI Sales Agent
+## Level 2 — 2.0 Deal Desk (v1)
 
 ```mermaid
 flowchart TB
-  D11[(D11 Job Queue)]
-  P21(2.1<br/>Acquire conversation lock<br/>& gate: aiMode, hours, caps)
-  P22(2.2<br/>Build context:<br/>system prompt, history,<br/>lead state, operator events)
-  P23(2.3<br/>Claude tool-use loop)
-  P24(2.4<br/>Execute tool<br/>server-side validation)
-  P25(2.5<br/>Outbound text filter<br/>prices & URLs)
-  P26(2.6<br/>Persist run & steps)
+  STF[Staff]
+  OWN[Owner]
+  P21(2.1<br/>Reply & quick-insert<br/>trip info)
+  P22(2.2<br/>Quote builder<br/>live price preview)
+  P23(2.3<br/>Send quote<br/>server re-evaluates)
+  P24(2.4<br/>Ask owner<br/>create approval)
+  P25(2.5<br/>Owner decides<br/>approve / counter / decline)
+  P26(2.6<br/>Send payment link<br/>hold seats)
+  P27(2.7<br/>Follow-up due scan)
   P3(3.0 Pricing Engine)
   P4(4.0 Booking & Inventory)
   P5(5.0 Payments)
   P1(1.0 Channel Gateway)
-  LLM[Claude API]
-  OWN[Owner]
   D2[(D2 Conversations)]
   D3[(D3 Departures)]
   D6[(D6 Settings & Offers)]
   D12[(D12 Approvals & Quotes)]
-  D9[(D9 Activity)]
+  D9[(D9 Activity & Audit)]
 
-  D11 -- agent.reply / approval_decided / payment_received / follow_up --> P21
-  D2 -- aiMode, run count --> P21
-  P21 -- skip: SKIPPED run --> P26
-  P21 --> P22
-  D2 -- last N messages, summary --> P22
-  D12 -- quotes & decided approvals --> P22
-  P22 -- messages + tools --> P23
-  P23 <--> LLM
-  P23 -- tool_use --> P24
-  P24 -- evaluate --> P3
+  STF -- text --> P21
+  D3 -- itinerary, inclusions, list price --> P21
+  P21 -- message --> P1
+  STF -- departure, pax, asked price --> P22
+  P22 --> P3
   D3 & D6 --> P3
-  P3 -- decision (no cost/floor) --> P24
-  P24 -- quote / approval --> D12
-  D12 -- approval card --> OWN
-  P24 -- hold seats --> P4
-  P24 -- create link --> P5
-  P24 -- tool_result --> P23
-  P23 -- final text --> P25
-  D12 -- issued prices for this conversation --> P25
-  P25 -- pass --> P1
-  P25 -- violation → BLOCKED + approval OTHER --> D12
-  P23 & P24 --> P26
-  P26 -- AgentRun, AgentStep --> D2
-  P26 -- activity --> D9
+  P3 -- decision, offers, L, suggested; floor/margin owner-only --> P22
+  P22 -- preview --> STF
+  STF -- send at price --> P23
+  P23 -- re-evaluate --> P3
+  P23 -- Quote --> D12
+  P23 -- quote card --> P1
+  P23 -- below-L audit --> D9
+  STF -- ask owner --> P24
+  P24 -- Approval with engine suggestion --> D12
+  D12 -- pending approvals, alert --> OWN
+  OWN -- decision --> P25
+  P25 -- decided price --> D12
+  P25 -- approved quote --> P23
+  P25 -- audit --> D9
+  STF -- send link on quote --> P26
+  D12 -- valid quote --> P26
+  P26 -- hold seats --> P4
+  P26 -- ADVANCE link request --> P5
+  D2 & D12 -- quotes without reply 20h --> P27
+  P27 -- Follow-up due --> STF
 ```
 
 ## Level 2 — 5.0 Payments & Dues
@@ -289,9 +287,9 @@ flowchart TB
   D10[(D10 Object Storage)]
   RR[(ReminderRule / ReminderLog)]
   P1(1.0 Channel Gateway)
-  P2(2.0 AI Agent)
+  P2(2.0 Deal Desk)
 
-  P2 -- ADVANCE link for HELD booking --> P51
+  P2 -- ADVANCE link for approved quote --> P51
   OWN -- send balance link --> P51
   P51 -- create link API --> RZP
   RZP -- plink id, short_url --> P51
@@ -306,7 +304,6 @@ flowchart TB
   P54 -- PDF --> D10
   P54 -- Invoice --> D5
   P53 -- confirmation + invoice --> P1
-  P53 -- payment_received --> P2
   RR -- enabled rules --> P55
   D4 -- open balances, due dates --> P55
   P55 -- reminder (template if window closed) --> P1
@@ -324,11 +321,10 @@ flowchart TB
 flowchart LR
   OWN[Owner / Staff]
   SUP[Supplier]
-  LLM[Claude API]
   P61(6.1<br/>Compose RFQ<br/>prefill baseline)
   P62(6.2<br/>Fan-out per recipient<br/>WA template / email)
   P63(6.3<br/>Match reply<br/>to open RFQ)
-  P64(6.4<br/>Parse quote<br/>structured output)
+  P64(6.4<br/>Parse quote<br/>rule-based, confidence)
   P65(6.5<br/>Compare & rank<br/>savings vs baseline)
   P66(6.6<br/>Book supplier<br/>create expense)
   P67(6.7<br/>Nudge / timeout job)
@@ -348,7 +344,7 @@ flowchart LR
   OWN -- pasted email / phone reply --> P64
   D7 -- latest SENT RFQ for supplier --> P63
   P63 -- reply text + RFQ context --> P64
-  P64 <-- schema-constrained parse --> LLM
+  P64 -- needs check, low confidence --> OWN
   P64 -- SupplierQuote, confidence --> D7
   D7 --> P65
   P65 -- ranked quotes, best, savings --> OWN
@@ -398,3 +394,58 @@ flowchart LR
   P77 -- TICKETS expense --> D14
   P77 -- tickets to travellers --> P1
 ```
+
+---
+
+## Appendix — v2 (deferred): Level 2 for the 2.0 AI Sales Agent
+
+In v2, the Anthropic Claude API joins Level 0 as an external entity ("conversation context, tool results" out; "replies, tool calls" in). Process 2.0 gains this AI path. Its tools call the v1 Deal Desk functions (2.3, 2.4, 2.6). The `payment_received` trigger also resumes the agent.
+
+
+```mermaid
+flowchart TB
+  D11[(D11 Job Queue)]
+  P21(2.1<br/>Acquire conversation lock<br/>& gate: aiMode, hours, caps)
+  P22(2.2<br/>Build context:<br/>system prompt, history,<br/>lead state, operator events)
+  P23(2.3<br/>Claude tool-use loop)
+  P24(2.4<br/>Execute tool<br/>server-side validation)
+  P25(2.5<br/>Outbound text filter<br/>prices & URLs)
+  P26(2.6<br/>Persist run & steps)
+  P3(3.0 Pricing Engine)
+  P4(4.0 Booking & Inventory)
+  P5(5.0 Payments)
+  P1(1.0 Channel Gateway)
+  LLM[Claude API]
+  OWN[Owner]
+  D2[(D2 Conversations)]
+  D3[(D3 Departures)]
+  D6[(D6 Settings & Offers)]
+  D12[(D12 Approvals & Quotes)]
+  D9[(D9 Activity)]
+
+  D11 -- agent.reply / approval_decided / payment_received / follow_up --> P21
+  D2 -- aiMode, run count --> P21
+  P21 -- skip: SKIPPED run --> P26
+  P21 --> P22
+  D2 -- last N messages, summary --> P22
+  D12 -- quotes & decided approvals --> P22
+  P22 -- messages + tools --> P23
+  P23 <--> LLM
+  P23 -- tool_use --> P24
+  P24 -- evaluate --> P3
+  D3 & D6 --> P3
+  P3 -- decision (no cost/floor) --> P24
+  P24 -- quote / approval --> D12
+  D12 -- approval card --> OWN
+  P24 -- hold seats --> P4
+  P24 -- create link --> P5
+  P24 -- tool_result --> P23
+  P23 -- final text --> P25
+  D12 -- issued prices for this conversation --> P25
+  P25 -- pass --> P1
+  P25 -- violation → BLOCKED + approval OTHER --> D12
+  P23 & P24 --> P26
+  P26 -- AgentRun, AgentStep --> D2
+  P26 -- activity --> D9
+```
+

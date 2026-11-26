@@ -143,7 +143,8 @@ model AddOn {
 
 // ───────────────────────────── AI rules & offers ─────────────────────────────
 
-// Singleton row (id = 1). Edited on the "AI rules" screen.
+// Singleton row (id = 1). Edited on the "Pricing rules" screen (the demo's "AI rules").
+// v1 uses the pricing fields; freebieFirst, reply24x7, businessHours*, escalateComplaints/Refunds, assistantName are v2 (AI).
 model AgentSettings {
   id                         Int      @id @default(1)
   floorMarginBps             Int      @default(1700) // AI never sells below this margin
@@ -321,6 +322,7 @@ enum AgentRunStatus {
   SKIPPED
 }
 
+// v2 (AI agent). Kept in the schema, unused in v1.
 model AgentRun {
   id              String         @id @default(cuid())
   conversationId  String
@@ -343,6 +345,7 @@ model AgentRun {
   @@index([conversationId, startedAt])
 }
 
+// v2 (AI agent). Kept in the schema, unused in v1.
 model AgentStep {
   id        String   @id @default(cuid())
   runId     String
