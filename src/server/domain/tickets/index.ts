@@ -14,7 +14,7 @@ import { publish } from "../../pubsub";
 import { enqueue } from "../../queue";
 import { getStorage } from "../../storage/s3";
 import { dateOnly, todayIST } from "../../time";
-import { pnrSplit, rankOptions, splitSignature, unticketed, windowOpensAt, type BookingForTickets, type Passenger, type TicketPlan } from "./core";
+import { extrasCategory, pnrSplit, rankOptions, splitSignature, unticketed, windowOpensAt, type BookingForTickets, type Passenger, type TicketPlan } from "./core";
 
 export type Actor = { id: string; role: Role };
 
@@ -237,6 +237,8 @@ export type ConfirmResult = {
   pnrs: string[];
   expenseId: string;
   amount: number;
+  /** The hidden-extras expense (extras × pax), when the option has extras. */
+  extrasExpenseId: string | null;
   optionTitle: string;
 };
 
@@ -336,6 +338,22 @@ export async function confirmBooking(input: ConfirmInput, actor: Actor, now: Dat
       : await tx.expense.create({
           data: { category: "TICKETS", amount, description, departureId: plan.departureId, bookingId: plan.bookingId, incurredOn: todayIST(now), createdById: actor.id },
         });
+    // PRF-2: the hidden extras in the landed cost are a real cost too.
+    const extrasAmount = option.extrasPerPax * pax;
+    const extras =
+      extrasAmount > 0
+        ? await tx.expense.create({
+            data: {
+              category: extrasCategory(option.extrasNote),
+              amount: extrasAmount,
+              description: `Hidden extras: ${option.extrasNote ?? "extras"} · ${pax} × ${inr(option.extrasPerPax)}`,
+              departureId: plan.departureId,
+              bookingId: plan.bookingId,
+              incurredOn: todayIST(now),
+              createdById: actor.id,
+            },
+          })
+        : null;
     await audit(
       {
         userId: actor.id,
@@ -343,11 +361,11 @@ export async function confirmBooking(input: ConfirmInput, actor: Actor, now: Dat
         entityType: "TravelPlan",
         entityId: plan.id,
         before: { status: plan.status, ...(placeholder ? { placeholderExpense: { id: placeholder.id, amount: placeholder.amount } } : {}) },
-        after: { optionId: option.id, pax, tickets: groupIds, pnrs, expenseId: expense.id, amount },
+        after: { optionId: option.id, pax, tickets: groupIds, pnrs, expenseId: expense.id, amount, ...(extras ? { extrasExpenseId: extras.id, extrasAmount, extrasCategory: extras.category } : {}) },
       },
       tx,
     );
-    return { plan, option, pax, groups, groupIds, docIds, expense, amount };
+    return { plan, option, pax, groups, groupIds, docIds, expense, amount, extras };
   });
 
   if (result.docIds.length) {
@@ -362,6 +380,7 @@ export async function confirmBooking(input: ConfirmInput, actor: Actor, now: Dat
     pnrs,
     expenseId: result.expense.id,
     amount: result.amount,
+    extrasExpenseId: result.extras?.id ?? null,
     optionTitle: result.option.title,
   };
 }

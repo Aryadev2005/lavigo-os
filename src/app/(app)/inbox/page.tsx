@@ -30,7 +30,7 @@ export default async function Page(props: PageProps<"/inbox">) {
 
   return (
     <div className="inbox">
-      <LiveRefresh types={["message.created", "message.updated", "conversation.updated", "approval.created", "approval.decided", "booking.updated"]} />
+      <LiveRefresh types={["message.created", "message.updated", "conversation.updated", "approval.created", "approval.decided", "booking.updated", "settings.updated"]} />
       <ConversationList rows={rows} counts={counts} tab={tab} selectedId={thread?.id ?? null} />
       {thread ? (
         <Thread thread={thread} departures={departures} templates={templates} deal={deal} />

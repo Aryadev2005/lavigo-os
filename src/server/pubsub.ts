@@ -17,6 +17,7 @@ export type AppEvent =
   | { type: "payment.received"; payload: { bookingId: string; amount: number } }
   | { type: "booking.updated"; payload: { bookingId: string } }
   | { type: "rfq.updated"; payload: { rfqId: string } }
+  | { type: "settings.updated"; payload: Record<string, never> }
   | { type: "activity.created"; payload: { activityId: string; text: string; icon: string } }
   /** audience: only sessions with that role show it (default everyone). */
   | { type: "toast"; payload: { text: string; icon?: string; audience?: "OWNER" | "STAFF" } };

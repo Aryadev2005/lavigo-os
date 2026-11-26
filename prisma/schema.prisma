@@ -85,6 +85,7 @@ model Trip {
   inclusions   String[]
   exclusions   String[]
   itinerary    Json // [{ day: 1, title: "...", description: "..." }]
+  tags         String[] @default([]) // ["hills", "family"]: Fill seats matches past travellers' tags (DEP-3)
   heroImageKey String?
   active       Boolean  @default(true)
   createdAt    DateTime @default(now())

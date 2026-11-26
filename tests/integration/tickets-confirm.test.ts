@@ -42,7 +42,7 @@ async function booking(departureId: string, pax: number) {
 }
 
 /** A departure with bookings of 4, 3 and 7 travellers (→ tickets of 6, 1+4 and 3) and a bus option. */
-async function bookedReadyPlan() {
+async function bookedReadyPlan(extras: { perPax: number; note: string } | null = null) {
   const dep = await makeDeparture({ daysOut: 30 });
   for (const n of [4, 3, 7]) await booking(dep.id, n);
   const { id: planId } = await savePlan(
@@ -51,7 +51,7 @@ async function bookedReadyPlan() {
     actor,
   );
   // A bus, so no IRCTC window applies whatever the ARP setting.
-  const { id: optionId } = await saveOption(planId, null, { mode: "BUS", title: "AC bus", details: "", ticketPerPax: rupees(1_960), extrasPerPax: 0, extrasNote: null, tags: [], disqualified: false, disqualifiedReason: null }, actor);
+  const { id: optionId } = await saveOption(planId, null, { mode: "BUS", title: "AC bus", details: "", ticketPerPax: rupees(1_960), extrasPerPax: extras?.perPax ?? 0, extrasNote: extras?.note ?? null, tags: [], disqualified: false, disqualifiedReason: null }, actor);
   return { dep, planId, optionId };
 }
 
@@ -93,6 +93,20 @@ describe("confirmBooking", () => {
     expect(r.pax).toBe(2);
     const amounts = (await db.expense.findMany({ where: { departureId: dep.id, category: "TICKETS" }, orderBy: { createdAt: "asc" } })).map((e) => e.amount);
     expect(amounts).toEqual([rupees(1_960) * 14, rupees(1_960) * 2]);
+  });
+
+  it("hidden extras become a second expense (extras × pax); a double submit still makes one of each", async () => {
+    const { dep, planId, optionId } = await bookedReadyPlan({ perPax: rupees(450), note: "Shared cab NJP → Gangtok" });
+    const results = await Promise.allSettled([confirmBooking(input(planId, optionId, 3), actor), confirmBooking(input(planId, optionId, 3), actor)]);
+    expect(results.filter((r) => r.status === "fulfilled")).toHaveLength(1);
+    const expenses = await db.expense.findMany({ where: { departureId: dep.id } });
+    const byCategory = Object.fromEntries(expenses.map((e) => [e.category, e.amount]));
+    expect(expenses).toHaveLength(2);
+    expect(byCategory).toEqual({ TICKETS: rupees(1_960) * 14, TRANSPORT: rupees(450) * 14 });
+    const extras = expenses.find((e) => e.category === "TRANSPORT")!;
+    expect(extras.description).toBe("Hidden extras: Shared cab NJP → Gangtok · 14 × ₹450");
+    const auditRow = await db.auditLog.findFirstOrThrow({ where: { entityId: planId, action: "travel_plan.book" } });
+    expect(auditRow.after).toMatchObject({ extrasExpenseId: extras.id, extrasAmount: rupees(450) * 14 });
   });
 
   it("rejects a non-PDF upload and books nothing", async () => {

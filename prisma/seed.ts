@@ -158,6 +158,7 @@ async function seedRules(ownerId: string) {
       t("payment_overdue", "UTILITY", "PAYMENT_REMINDER", "Hi {{1}}, your balance of {{2}} for {{3}} was due on {{4}}. Please pay here to keep your seats: {{5}}", ["name", "amount", "trip", "due_date", "pay_link"]),
       t("rfq_request", "UTILITY", "RFQ", "Hello {{1}}, Lavigo Travel here. Please share your best rate for {{2}} {{3}} rooms ({{4}}) in {{5}}, check-in {{6}} for {{7}} nights. Reply with your rate per room per night.", ["supplier", "rooms", "category", "meal_plan", "destination", "check_in", "nights"]),
       t("seat_fill_offer", "MARKETING", "CAMPAIGN", "Hi {{1}}! {{2}} on {{3}}: only {{4}} seats left. Since you travelled with us before, here's {{5}} off till {{6}}. Book in 2 minutes: {{7}}", ["name", "trip", "date", "seats_left", "discount", "valid_until", "link"]),
+      t("seat_fill_nudge", "MARKETING", "CAMPAIGN", "Hi {{1}}! {{2}} on {{3}}: only {{4}} seats left. Book in 2 minutes: {{5}}", ["name", "trip", "date", "seats_left", "link"]),
       t("follow_up", "MARKETING", "FOLLOW_UP", "Hi {{1}}, just checking in on your {{2}} plan. Seats are filling up. Shall we hold {{3}} seats for you?", ["name", "trip", "pax"]),
       t("doc_checklist", "UTILITY", "DOC_CHECKLIST", "Hi {{1}}, for {{2}} on {{3}} please send: {{4}}. Just reply here with photos.", ["name", "trip", "date", "documents"]),
       t("booking_confirmed", "UTILITY", "BOOKING_CONFIRMED", "Hi {{1}}, booking {{2}} for {{3}} ({{4}} travellers) is confirmed. We received {{5}}. Balance {{6}} is due by {{7}}.", ["name", "booking_code", "trip", "pax", "paid", "balance", "due_date"]),
@@ -173,7 +174,7 @@ type TripKey = "nepal" | "netarhat" | "darjeeling" | "sikkim";
 const TRIPS: Record<TripKey, Prisma.TripCreateInput & { image: string }> = {
   nepal: {
     slug: "nepal", name: "Nepal", title: "Nepal · Pokhara & Kathmandu", destination: "Pokhara & Kathmandu, Nepal",
-    nights: 5, days: 6, image: "nepal",
+    nights: 5, days: 6, image: "nepal", tags: ["hills", "family"],
     summary: "Six days across Kathmandu's durbar squares and Pokhara's lakeside, by train and road from Ranchi.",
     inclusions: ["Train 3AC Ranchi ↔ Raxaul", "AC coach in Nepal", "5 nights hotels (twin share)", "Breakfast and dinner", "Trip leader"],
     exclusions: ["Lunch", "Entry tickets", "Personal expenses"],
@@ -188,7 +189,7 @@ const TRIPS: Record<TripKey, Prisma.TripCreateInput & { image: string }> = {
   },
   netarhat: {
     slug: "netarhat", name: "Netarhat", title: "Netarhat Weekend", destination: "Netarhat, Jharkhand",
-    nights: 1, days: 2, image: "netarhat",
+    nights: 1, days: 2, image: "netarhat", tags: ["weekend", "hills"],
     summary: "The Queen of Chotanagpur: sunrise at Magnolia Point and the Lodh falls, in one weekend.",
     inclusions: ["AC coach from Ranchi", "1 night stay", "All meals", "Trip leader"],
     exclusions: ["Personal expenses"],
@@ -199,7 +200,7 @@ const TRIPS: Record<TripKey, Prisma.TripCreateInput & { image: string }> = {
   },
   darjeeling: {
     slug: "darjeeling", name: "Darjeeling", title: "Darjeeling Winter Escape", destination: "Darjeeling, West Bengal",
-    nights: 4, days: 5, image: "darjeeling",
+    nights: 4, days: 5, image: "darjeeling", tags: ["hills", "couple"],
     summary: "Toy train, tea gardens and Kanchenjunga at sunrise from Tiger Hill.",
     inclusions: ["Train 3AC Ranchi ↔ NJP", "Shared cabs", "3 nights hotel", "Breakfast and dinner", "Trip leader"],
     exclusions: ["Toy train joyride", "Lunch"],
@@ -213,7 +214,7 @@ const TRIPS: Record<TripKey, Prisma.TripCreateInput & { image: string }> = {
   },
   sikkim: {
     slug: "sikkim", name: "Sikkim", title: "North Sikkim Snow Trip", destination: "Gangtok & Lachung, Sikkim",
-    nights: 5, days: 6, image: "sikkim",
+    nights: 5, days: 6, image: "sikkim", tags: ["snow", "hills"],
     summary: "Gangtok, Lachung and Yumthang valley in snow season.",
     inclusions: ["Train 3AC Ranchi ↔ NJP", "Shared cabs", "5 nights hotels", "Breakfast and dinner", "Permits", "Trip leader"],
     exclusions: ["Zero Point cab", "Lunch"],
@@ -922,6 +923,21 @@ async function seedTravelPlans(
   );
 }
 
+// ───────────────────────────── waitlist (Fill seats audience) ─────────────────────────────
+
+/** Two opted-in past customers waiting for a Nepal seat, so Fill seats shows every reason. */
+async function seedWaitlist(departures: Awaited<ReturnType<typeof seedCatalog>>["departures"]) {
+  const np = departures["NP-28N"]!;
+  const waiting = await db.customer.findMany({
+    where: { marketingOptIn: true, phone: { not: null }, bookings: { none: { departureId: np.id } } },
+    orderBy: { name: "asc" },
+    take: 2,
+  });
+  for (const [i, c] of waiting.entries()) {
+    await db.waitlistEntry.create({ data: { customerId: c.id, departureId: np.id, pax: 2 + i, createdAt: at(-3 - i, "18:10") } });
+  }
+}
+
 // ───────────────────────────── activity feed ─────────────────────────────
 
 async function seedActivity(departures: Awaited<ReturnType<typeof seedCatalog>>["departures"]) {
@@ -982,6 +998,7 @@ async function main() {
   await seedConversations(departures, staff.id, saurav.id);
   await seedSuppliers();
   await seedTravelPlans(departures, goa, Number(process.env.IRCTC_ARP_DAYS) || 60);
+  await seedWaitlist(departures);
   await seedActivity(departures);
   await seedReminderHistory();
 
