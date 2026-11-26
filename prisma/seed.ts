@@ -22,6 +22,7 @@ import {
 import { hashPassword } from "../src/server/password";
 import { rupees } from "../src/server/money";
 import { addDays, formatDate, istDateString, istDateStringOf, istDateTime, todayIST } from "../src/server/time";
+import { pnrSplit, unticketed, windowOpensAt } from "../src/server/domain/tickets/core";
 
 // Refuse to wipe a production database by accident.
 if (process.env.NODE_ENV === "production") {
@@ -827,6 +828,7 @@ async function createPlan(
   trend?: { optionIndex: number; fares: number[] },
 ) {
   const row = await db.travelPlan.create({ data: plan });
+  const optionIds: string[] = [];
   for (const [idx, o] of options.entries()) {
     const opt = await db.travelOption.create({
       data: {
@@ -835,6 +837,7 @@ async function createPlan(
         disqualified: Boolean(o.disqualified), disqualifiedReason: o.disqualified ?? null,
       },
     });
+    optionIds.push(opt.id);
     const fares = trend?.optionIndex === idx ? trend.fares : [o.ticket];
     for (const [k, fare] of fares.entries()) {
       await db.fareSnapshot.create({
@@ -842,7 +845,31 @@ async function createPlan(
       });
     }
   }
-  return row;
+  return { ...row, optionIds };
+}
+
+/**
+ * The demo's Nepal state: the 21 travellers already on the 3AC train, split into IRCTC tickets
+ * (≤ 6, families together), with one TICKETS expense. New bookings then show as "new travellers".
+ */
+async function bookGroupPlan(planId: string, departureId: string, optionId: string, ticket: number, title: string) {
+  const bookings = await db.booking.findMany({
+    where: { departureId, status: { in: ["CONFIRMED", "COMPLETED"] } },
+    orderBy: [{ createdAt: "asc" }, { code: "asc" }],
+    include: { customer: { select: { name: true } }, travellers: { orderBy: [{ isLead: "desc" }, { createdAt: "asc" }] } },
+  });
+  const groups = pnrSplit(unticketed(bookings.map((b) => ({ id: b.id, code: b.code, pax: b.pax, customerName: b.customer.name, travellers: b.travellers })), []));
+  const bookedAt = at(-20, "08:04");
+  for (const [i, g] of groups.entries()) {
+    await db.ticketGroup.create({
+      data: { planId, idx: i + 1, label: g.label, passengers: g.passengers as unknown as Prisma.InputJsonValue, pnr: String(2_456_130_000 + i * 7_919), status: "BOOKED", bookedAt },
+    });
+  }
+  const pax = groups.reduce((n, g) => n + g.passengers.length, 0);
+  await db.travelPlan.update({ where: { id: planId }, data: { status: "BOOKED", bookedOptionId: optionId } });
+  await db.expense.create({
+    data: { departureId, category: "TICKETS", amount: rupees(ticket) * pax, description: `${title} · ${pax} × ₹${ticket.toLocaleString("en-IN")} · ${groups.length} IRCTC tickets`, incurredOn: addDays(TODAY, -20) },
+  });
 }
 
 async function seedTravelPlans(
@@ -866,7 +893,7 @@ async function seedTravelPlans(
   );
 
   const np = departures["NP-28N"]!;
-  await createPlan(
+  const nepal = await createPlan(
     {
       label: "Nepal · group", departureId: np.id, origin: "Ranchi", destination: "Raxaul", travelDate: np.startDate,
       budgetPerPax: rupees(2_600), note: "Fixed group price. Travel budget is ₹2,600 per person, return.",
@@ -874,17 +901,18 @@ async function seedTravelPlans(
     [
       { mode: "TRAIN", title: "Train 3AC · Ranchi → Raxaul, return", details: "Overnight both ways · 1 change", ticket: 1_960, tags: ["Best value"] },
       { mode: "BUS", title: "Private AC bus · Ranchi → Raxaul, return", details: "Door to door · 11h each way · whole bus hired", ticket: 2_250, tags: ["Most comfortable"] },
-      { mode: "TRAIN", title: "Train Sleeper · Ranchi → Raxaul, return", details: "Overnight both ways · 1 change", ticket: 1_140, tags: ["Cheapest", "Comfort complaints likely"] },
+      { mode: "TRAIN", title: "Train Sleeper · Ranchi → Raxaul, return", details: "Overnight both ways · 1 change", ticket: 1_140, tags: ["Cheapest", "Comfort complaints likely"], disqualified: "Comfort complaints likely" },
     ],
   );
+  await bookGroupPlan(nepal.id, np.id, nepal.optionIds[0]!, 1_960, "Train 3AC · Ranchi → Raxaul, return");
 
   const sk = departures["SK-09J"]!;
   const windowDay = addDays(sk.startDate, -arpDays);
-  const windowOpensAt = istDateTime(istDateStringOf(windowDay), "08:00");
+  const opensAt = windowOpensAt(sk.startDate, arpDays);
   await createPlan(
     {
       label: "Sikkim · group", departureId: sk.id, origin: "Ranchi", destination: "New Jalpaiguri", travelDate: sk.startDate,
-      budgetPerPax: rupees(2_200), status: "WINDOW_PENDING", windowOpensAt,
+      budgetPerPax: rupees(2_200), status: opensAt > new Date() ? "WINDOW_PENDING" : "PLANNING", windowOpensAt: opensAt,
       note: `Train bookings open ${arpDays} days before travel. For a group, the first morning decides whether you get seats together.`,
     },
     [
