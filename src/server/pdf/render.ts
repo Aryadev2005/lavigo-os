@@ -29,7 +29,7 @@ function bookingNo(code: string) {
   return code.replace(/^LVG-/, "");
 }
 
-async function store(opts: { kind: DocumentKind; key: string; fileName: string; element: ReactElement; bookingId?: string; departureId?: string }) {
+export async function store(opts: { kind: DocumentKind; key: string; fileName: string; element: ReactElement; bookingId?: string; departureId?: string }) {
   const existing = await db.document.findUnique({ where: { storageKey: opts.key } });
   if (existing) return existing;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- react-pdf's renderToBuffer wants its own Document element type

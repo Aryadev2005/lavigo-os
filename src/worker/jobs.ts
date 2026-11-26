@@ -6,6 +6,8 @@ import { applyStatus, ingestInbound, storeInboundMedia } from "@/server/domain/c
 import { expireHold } from "@/server/domain/bookings";
 import { createQuoteLink, expireApproval, notifyOwnersOfApproval, scanFollowUps } from "@/server/domain/deals";
 import { sendBookingConfirmation, sendInvoiceToChat } from "@/server/domain/deals/confirmations";
+import * as suppliers from "@/server/domain/suppliers";
+import { renderAndSendVoucher } from "@/server/domain/suppliers/voucher-job";
 import { createAndSendLink, runReminders } from "@/server/domain/dues";
 import { env } from "@/server/env";
 import { applyPaymentEvent } from "@/server/domain/payments";
@@ -123,6 +125,10 @@ export const PROCESSORS: Partial<Record<QueueName, Processor>> = {
   "followups.scan": async () => scanFollowUps(),
   "approval.expire": async (job) => ({ outcome: await expireApproval((job.data as { approvalId: string }).approvalId) }),
   "booking.confirm": async (job) => ({ outcome: await sendBookingConfirmation((job.data as { bookingId: string }).bookingId) }),
+  "rfq.send": async (job) => ({ outcome: await suppliers.sendToRecipient(job.data.recipientId, job.data.kind, job.data.quoteId) }),
+  "rfq.parseReply": async (job) => suppliers.handleSupplierReply(job.data as { messageId: string; supplierId: string }),
+  "rfq.nudge": async () => suppliers.scanNudges(),
+  "voucher.send": async (job) => renderAndSendVoucher((job.data as { bookingId: string }).bookingId),
   "notify.owner": async (job) => notifyOwnersOfApproval((job.data as { approvalId: string }).approvalId, env.APP_URL),
   "hold.expire": async (job) => {
     const outcome = await expireHold((job.data as { bookingId: string }).bookingId);

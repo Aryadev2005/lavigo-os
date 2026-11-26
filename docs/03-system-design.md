@@ -298,6 +298,8 @@ The client never sends a price the server trusts. Every price is re-derived on t
 
 v2 can swap this for an LLM parser behind the same `parseSupplierReply()` signature.
 
+**Implementation notes (v1, P5).** Amounts come back in paise; confidence 0.9 (one labelled rate), 0.6 (total ÷ room-nights), 0.5 (one unlabelled amount), 0.4 (several amounts, best guess first). Each amount takes the kind of its *nearest* keyword, so "rate 2380, cab extra 1500" is ambiguous but "2150 per room, total 64500" is high with `totalIfStated`. A decline is recorded only when no amount is present (recipient `DECLINED`, no `SupplierQuote`, since its rate is required). Candidates aren't stored: they're re-derived from `rawText` by the same pure parser. Staff confirming a candidate set `confidenceBps = 10000`; manual quotes have `confidenceBps = null`. Both count as trusted for "best".
+
 ### 6.3 Automatic (non-AI) customer messages
 
 | Event | Message |
@@ -360,6 +362,7 @@ interface ChannelAdapter {
 | `hold.expire` | delayed at `holdExpiresAt` | 5 | status re-check in txn |
 | `reminders.daily` | cron `0 10 * * *` IST | 1 | `ReminderLog` unique (booking, rule, date) |
 | `rfq.send` / `rfq.parseReply` (rule-based) / `rfq.nudge` (`*/15 * * * *`) | RFQ / supplier inbound / cron | 5 | recipient status machine |
+| `voucher.send` | Bookings drawer "Send vouchers" | 1 | voucher PDF keyed by booking + booked hotels; `sendDocument` only inside the window, else a note |
 | `followups.scan` | cron `0 * * * *` | 1 | marks conversations "Follow-up due" (quote, no reply 20h); expires quotes past validity; **no automatic sends** in v1 |
 | `approval.expire` | delayed at `Approval.expiresAt` (quote validity) | 1 | status re-check (`PENDING` only) |
 | `notify.owner` | `askOwner` | 1 | jobId per approval; best-effort `owner_approval` template to each owner's `User.phone` |

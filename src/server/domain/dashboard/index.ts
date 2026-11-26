@@ -11,6 +11,7 @@ import { inr, inrLakh, pct, toBps } from "../../money";
 import { addDays, daysBetween, formatDate, formatIST, istStartOfDay, monthStart, todayIST } from "../../time";
 import { waitingConversations } from "../conversations/waiting";
 import { getLateBookings } from "../dues";
+import { rfqNeeds } from "../suppliers/needs-you";
 
 // ───────────────────────────── KPIs (TOD-1) ─────────────────────────────
 
@@ -208,42 +209,6 @@ async function quoteNeeds(now: Date): Promise<NeedItem[]> {
       action: { label: "Follow up", href: `/inbox?c=${c.id}` },
     };
   });
-}
-
-async function rfqNeeds(now: Date): Promise<NeedItem[]> {
-  const rfqs = await db.rfq.findMany({
-    where: { status: "SENT" },
-    include: { recipients: { include: { quotes: true } } },
-  });
-  const nudgeDeadline = (r: { nudgedAt: Date | null; sentAt: Date | null }) =>
-    (r.nudgedAt ?? r.sentAt)?.getTime() ?? Infinity;
-  const out: NeedItem[] = [];
-  for (const rfq of rfqs) {
-    if (!rfq.recipients.length) continue;
-    const pending = rfq.recipients.filter(
-      (r) =>
-        (r.status === "QUEUED" || r.status === "SENT" || r.status === "NUDGED") &&
-        // still inside its nudge window (24h after the last send/nudge)
-        nudgeDeadline(r) + 24 * 3_600_000 > now.getTime(),
-    );
-    if (pending.length) continue;
-    const quotes = rfq.recipients.flatMap((r) => r.quotes);
-    if (!quotes.length) continue;
-    const best = Math.min(...quotes.map((q) => q.ratePerRoomNight));
-    const vs =
-      rfq.baselineRatePerRoomNight && best < rfq.baselineRatePerRoomNight
-        ? `, ${Math.round(((rfq.baselineRatePerRoomNight - best) / rfq.baselineRatePerRoomNight) * 100)}% below your usual rate`
-        : "";
-    out.push({
-      key: `rfq:${rfq.id}`,
-      icon: "🏨",
-      tone: "ok",
-      title: `${quotes.length} hotel quote${quotes.length > 1 ? "s" : ""} in for ${rfq.destination}, ${formatDate(rfq.checkIn)}`,
-      detail: `Best: ${inr(best)}/room/night${vs}`,
-      action: { label: "Compare", href: `/supplier?rfq=${rfq.id}` },
-    });
-  }
-  return out;
 }
 
 async function lateNeeds(now: Date): Promise<NeedItem[]> {
