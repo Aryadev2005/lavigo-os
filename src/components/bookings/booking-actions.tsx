@@ -10,6 +10,7 @@ import {
   renderDocumentAction,
   sendLinkAction,
 } from "@/app/(app)/bookings/actions";
+import { sendVouchersAction } from "@/app/(app)/supplier/actions";
 
 export function BookingActions(props: {
   bookingId: string;
@@ -18,6 +19,8 @@ export function BookingActions(props: {
   invoiceDocumentId: string | null;
   itineraryDocumentId: string | null;
   hasDeparture: boolean;
+  /** Hotels for this departure were booked through the Supplier desk. */
+  hotelsBooked?: boolean;
 }) {
   const toast = useToast();
   const [pending, start] = useTransition();
@@ -61,9 +64,14 @@ export function BookingActions(props: {
       <button
         type="button"
         className="btn b2 sm"
-        disabled
-        title="Hotel vouchers arrive with the Supplier desk"
-        aria-label="Send vouchers (available once hotels are booked through the Supplier desk)"
+        disabled={pending || !props.hotelsBooked}
+        title={props.hotelsBooked ? "Hotel voucher PDF to the customer on WhatsApp" : "Available once hotels are booked through the Supplier desk"}
+        onClick={() =>
+          start(async () => {
+            const r = await sendVouchersAction(props.bookingId);
+            toast(r.ok ? `Hotel voucher is being prepared for ${props.customerName}` : r.error, r.ok ? "🏨" : "⚠️");
+          })
+        }
       >
         Send vouchers
       </button>

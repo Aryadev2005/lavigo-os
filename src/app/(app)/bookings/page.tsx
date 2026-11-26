@@ -7,6 +7,7 @@ import { LiveRefresh } from "@/components/live-refresh";
 import { initials } from "@/lib/utils";
 import { getBookingDetail, listBookableDepartures, listBookings, type BookingFilter, type BookingStatusPill } from "@/server/domain/bookings/queries";
 import { inr } from "@/server/money";
+import { hasBookedHotels } from "@/server/domain/suppliers";
 import { requireUser } from "@/server/rbac";
 
 export const metadata = { title: "Bookings" };
@@ -128,7 +129,7 @@ export default async function Page(props: PageProps<"/bookings">) {
 
       {detail ? (
         <Drawer closeHref={href(base)}>
-          <BookingDrawerContent detail={detail} role={user.role} closeHref={href(base)} />
+          <BookingDrawerContent detail={detail} role={user.role} closeHref={href(base)} hotelsBooked={await hasBookedHotels(detail.departureId)} />
         </Drawer>
       ) : null}
       {isNew ? (

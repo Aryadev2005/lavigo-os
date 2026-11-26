@@ -27,6 +27,7 @@ export const QUEUES = [
   "approval.expire",
   "notify.owner",
   "booking.confirm",
+  "voucher.send",
 ] as const;
 
 export type QueueName = (typeof QUEUES)[number];
@@ -112,6 +113,7 @@ export const REPEATABLES: { queue: QueueName; pattern: string }[] = [
   { queue: "reminders.daily", pattern: "0 10 * * *" },
   { queue: "webhooks.sweep", pattern: "*/5 * * * *" },
   { queue: "followups.scan", pattern: "0 * * * *" },
+  { queue: "rfq.nudge", pattern: "*/15 * * * *" },
 ];
 
 export async function registerRepeatables(): Promise<void> {

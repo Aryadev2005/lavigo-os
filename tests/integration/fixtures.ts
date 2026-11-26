@@ -8,14 +8,14 @@ const uid = () => randomBytes(4).toString("hex");
 
 /** Default settings + the standing group offer (₹500 off from 6 pax), as in the SRS example. */
 export async function ensureSettings() {
-  const settings = await db.agentSettings.upsert({ where: { id: 1 }, update: {}, create: { id: 1 } });
-  // Fixed id: test files run in parallel and must not create it twice.
-  await db.offer.upsert({
-    where: { id: "test-group-offer" },
-    update: {},
-    create: { id: "test-group-offer", kind: "GROUP", name: "Group offer", description: "₹500 off per person for 6 or more", amountPerPax: rupees(500), minPax: 6 },
+  // Test files run in parallel and all call this. Prisma's upsert is find-then-create, so two
+  // files can both try the insert (P2002); INSERT … ON CONFLICT DO NOTHING is atomic.
+  await db.agentSettings.createMany({ data: [{ id: 1 }], skipDuplicates: true });
+  await db.offer.createMany({
+    data: [{ id: "test-group-offer", kind: "GROUP", name: "Group offer", description: "₹500 off per person for 6 or more", amountPerPax: rupees(500), minPax: 6 }],
+    skipDuplicates: true,
   });
-  return settings;
+  return db.agentSettings.findUniqueOrThrow({ where: { id: 1 } });
 }
 
 export async function makeOwner() {
