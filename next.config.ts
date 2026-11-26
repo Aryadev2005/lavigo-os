@@ -19,6 +19,8 @@ const csp = [
 const nextConfig: NextConfig = {
   output: "standalone",
   poweredByHeader: false,
+  // Keep the dev badge off the sidebar footer.
+  devIndicators: { position: "bottom-right" },
   experimental: {
     // Enables forbidden() → src/app/forbidden.tsx (403) for role checks in requireUser().
     authInterrupts: true,

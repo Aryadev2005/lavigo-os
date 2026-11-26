@@ -112,6 +112,10 @@
     font-size: 14.5px;
     line-height: 1.45;
   }
+  /* The demo relies on browser-default bold headings; Tailwind preflight resets them. */
+  h1, h2, h3, h4 {
+    font-weight: 700;
+  }
   button {
     font-family: inherit;
     cursor: pointer;
