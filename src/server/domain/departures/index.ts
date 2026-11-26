@@ -101,13 +101,24 @@ export type DepartureInput = {
   endDate: string;
   seatsTotal: number;
   pricePerPax: number; // paise
-  costPerPax: number;
+  /** Owner only. Staff never see or set the cost (CLAUDE.md: cost never reaches a staff session). */
+  costPerPax: number | null;
   travelBudgetPerPax: number;
   usualRoomRate: number | null;
   status: DepartureStatus;
 };
 
-export async function saveDeparture(departureId: string | null, input: DepartureInput, actor: Actor): Promise<{ id: string }> {
+/**
+ * DEP-2. Owner and staff both edit departures, but the cost is the owner's: a staff save keeps the
+ * stored cost, and only the owner can create a departure (a new one needs a cost).
+ */
+export async function saveDeparture(departureId: string | null, raw: DepartureInput, actor: Actor): Promise<{ id: string }> {
+  const existing = departureId ? await db.departure.findUnique({ where: { id: departureId }, select: { costPerPax: true } }) : null;
+  if (departureId && !existing) throw new DepartureError("NOT_FOUND", "Departure not found");
+  if (!departureId && actor.role !== "OWNER") throw new DepartureError("INVALID", "Only the owner can add a departure, because it needs the cost price");
+  const costPerPax = actor.role === "OWNER" ? raw.costPerPax : (existing?.costPerPax ?? null);
+  if (costPerPax === null) throw new DepartureError("INVALID", "Enter the cost per person");
+  const input = { ...raw, costPerPax };
   const code = input.code.trim().toUpperCase();
   if (!/^[A-Z0-9-]{3,20}$/.test(code)) throw new DepartureError("INVALID", "Codes are letters, digits and dashes, like NP-28N");
   let start: Date;
@@ -154,7 +165,7 @@ export async function saveDeparture(departureId: string | null, input: Departure
       entityType: "Departure",
       entityId: departureId,
       before: { seatsTotal: before.seatsTotal, pricePerPax: before.pricePerPax, costPerPax: before.costPerPax, status: before.status },
-      after: { ...input, code },
+      after: { ...input, code, byRole: actor.role },
     });
     return { id: departureId };
   }

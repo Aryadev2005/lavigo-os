@@ -1,5 +1,5 @@
 /** Departures page reads (DEP-1, DEP-2, DEP-4). */
-import type { DepartureStatus } from "@prisma/client";
+import type { DepartureStatus, Role } from "@prisma/client";
 import { db } from "../../db";
 import { daysBetween, formatDate, istDateStringOf, todayIST } from "../../time";
 import { departureHealth, type DepartureHealth, type ItineraryDay } from "./index";
@@ -86,13 +86,14 @@ export type DepartureForm = {
   endDate: string;
   seatsTotal: number;
   pricePerPax: number;
-  costPerPax: number;
+  /** null for STAFF: cost never reaches a staff session. */
+  costPerPax: number | null;
   travelBudgetPerPax: number;
   usualRoomRate: number | null;
   status: DepartureStatus;
 };
 
-export async function getDepartureSheet(departureId: string | null): Promise<{ trips: TripForm[]; departure: DepartureForm | null }> {
+export async function getDepartureSheet(departureId: string | null, viewer: { role: Role }): Promise<{ trips: TripForm[]; departure: DepartureForm | null }> {
   const [trips, dep] = await Promise.all([
     db.trip.findMany({ where: { active: true }, orderBy: { name: "asc" } }),
     departureId ? db.departure.findUnique({ where: { id: departureId } }) : null,
@@ -121,7 +122,7 @@ export async function getDepartureSheet(departureId: string | null): Promise<{ t
           endDate: istDateStringOf(dep.endDate),
           seatsTotal: dep.seatsTotal,
           pricePerPax: dep.pricePerPax,
-          costPerPax: dep.costPerPax,
+          costPerPax: viewer.role === "OWNER" ? dep.costPerPax : null,
           travelBudgetPerPax: dep.travelBudgetPerPax,
           usualRoomRate: dep.usualRoomRate,
           status: dep.status,
