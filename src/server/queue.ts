@@ -23,12 +23,19 @@ export const QUEUES = [
   "campaign.send",
   "campaign.attribute",
   "maintenance.prune",
+  "webhooks.sweep",
 ] as const;
 
 export type QueueName = (typeof QUEUES)[number];
 
-/** BullMQ forbids ':' in queue names; dots are fine. Prefix keeps keys tidy in a shared Redis. */
-const PREFIX = "lavigo";
+/**
+ * Key prefix scoped to environment and stack, so a worker from another stack or mode sharing the
+ * same Redis (a parallel worktree, a prod-image smoke test, the test suite) can never consume
+ * these jobs. BullMQ forbids ':' in queue names, not in the prefix.
+ */
+export function queuePrefix(): string {
+  return `lavigo:${process.env.NODE_ENV ?? "development"}:${process.env.COMPOSE_PROJECT_NAME || "default"}`;
+}
 
 export const DEFAULT_JOB_OPTS: JobsOptions = {
   attempts: 5,
@@ -51,7 +58,7 @@ function trackedConnection(): Redis {
 export function getQueue(name: QueueName): Queue {
   let q = queues.get(name);
   if (!q) {
-    q = new Queue(name, { connection: trackedConnection(), prefix: PREFIX, defaultJobOptions: DEFAULT_JOB_OPTS });
+    q = new Queue(name, { connection: trackedConnection(), prefix: queuePrefix(), defaultJobOptions: DEFAULT_JOB_OPTS });
     queues.set(name, q);
   }
   return q;
@@ -86,7 +93,7 @@ export function createWorker<T = unknown, R = unknown>(
 ): Worker<T, R> {
   const worker = new Worker<T, R>(name, processor, {
     connection: trackedConnection(),
-    prefix: PREFIX,
+    prefix: queuePrefix(),
     concurrency: 1,
     ...opts,
   });
@@ -95,6 +102,18 @@ export function createWorker<T = unknown, R = unknown>(
   );
   worker.on("error", (err) => logger.error({ queue: name, err: err.message }, "worker error"));
   return worker;
+}
+
+/** Cron jobs, in IST (system design §8). Registered by the worker at boot; upserts are idempotent. */
+export const REPEATABLES: { queue: QueueName; pattern: string }[] = [
+  { queue: "reminders.daily", pattern: "0 10 * * *" },
+  { queue: "webhooks.sweep", pattern: "*/5 * * * *" },
+];
+
+export async function registerRepeatables(): Promise<void> {
+  for (const r of REPEATABLES) {
+    await getQueue(r.queue).upsertJobScheduler(`cron:${r.queue}`, { pattern: r.pattern, tz: "Asia/Kolkata" }, { name: r.queue, data: {} });
+  }
 }
 
 /** Close queues, then every Redis connection handed to BullMQ (call after closing workers). */

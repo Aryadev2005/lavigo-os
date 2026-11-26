@@ -401,6 +401,7 @@ DATABASE_URL=postgresql://lavigo:lavigo@postgres:5432/lavigo
 REDIS_URL=redis://redis:6379
 AUTH_SECRET=change-me
 S3_ENDPOINT=http://minio:9000
+S3_PUBLIC_ENDPOINT=http://localhost:9000   # host browsers use for presigned URLs; empty = S3_ENDPOINT
 S3_REGION=ap-south-1
 S3_BUCKET=lavigo
 S3_ACCESS_KEY=minio
@@ -423,6 +424,10 @@ PUBLIC_SITE_HOST=lavigo.in
 IRCTC_ARP_DAYS=60
 SENTRY_DSN=
 ```
+
+`S3_PUBLIC_ENDPOINT` exists because a presigned URL's signature covers its host: the server talks to MinIO as `minio:9000` inside Docker, but the browser must be sent to a host it can reach. In production with a managed S3-compatible store it is usually left empty (same endpoint for both).
+
+`COMPOSE_PROJECT_NAME` (set by docker compose) scopes BullMQ keys as `lavigo:{NODE_ENV}:{COMPOSE_PROJECT_NAME}`, so workers from another stack or mode sharing a Redis never consume these jobs.
 
 When provider keys are empty, adapters fall back to **fakes** in development: WhatsApp sends are logged and marked SENT; Razorpay returns a local `/dev/pay/{id}` page that triggers `simulate-payment`; SMTP goes to Mailpit. In production `env.ts` refuses to boot without the required keys.
 

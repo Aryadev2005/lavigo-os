@@ -1,8 +1,12 @@
 /**
  * Shared PDF building blocks (@react-pdf/renderer). Lavigo palette from the demo tokens.
- * Built-in Helvetica has no ₹ glyph, so PDFs print amounts as "Rs. 13,999".
+ * Text is set in Noto Sans (SIL OFL 1.1, see fonts/OFL.txt), which has the ₹ glyph; amounts use
+ * the same inr() formatter as the UI. The TTFs sit next to this module; the tsup worker bundle
+ * copies them to dist/fonts so the same relative URL resolves there.
  */
-import { StyleSheet, Text, View } from "@react-pdf/renderer";
+import { fileURLToPath } from "node:url";
+import { Font, StyleSheet, Text, View } from "@react-pdf/renderer";
+import { inr } from "../money";
 import type { ReactNode } from "react";
 
 export const INK = "#221944";
@@ -20,29 +24,36 @@ export const LAVIGO = {
   stateCode: "20 (Jharkhand)",
 };
 
-const whole = new Intl.NumberFormat("en-IN", { maximumFractionDigits: 0 });
-const exact = new Intl.NumberFormat("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fontFile = (name: string) => fileURLToPath(new URL(`./fonts/${name}`, import.meta.url));
 
-/** Paise → "Rs. 13,999" (or "Rs. 13,332.38" when there are paise). */
+export const FONT = "NotoSans";
+Font.register({
+  family: FONT,
+  fonts: [
+    { src: fontFile("NotoSans-Regular.ttf"), fontWeight: 400 },
+    { src: fontFile("NotoSans-Bold.ttf"), fontWeight: 700 },
+  ],
+});
+// Keep words whole: react-pdf's default hyphenation splits Indian names oddly.
+Font.registerHyphenationCallback((word) => [word]);
+
+/** Paise → "₹13,999" (or "₹13,332.38" when there are paise / exact is set). */
 export function rs(paise: number, opts: { exact?: boolean } = {}): string {
-  const sign = paise < 0 ? "-" : "";
-  const abs = Math.abs(paise);
-  const body = opts.exact || abs % 100 !== 0 ? exact.format(abs / 100) : whole.format(abs / 100);
-  return `${sign}Rs. ${body}`;
+  return inr(paise, opts);
 }
 
 export const s = StyleSheet.create({
-  page: { padding: 36, fontSize: 10, fontFamily: "Helvetica", color: "#1C1733" },
+  page: { padding: 36, fontSize: 10, fontFamily: FONT, color: "#1C1733" },
   header: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", backgroundColor: INK, color: "#fff", padding: 16, borderRadius: 8 },
-  h1: { fontSize: 18, fontFamily: "Helvetica-Bold", color: "#fff" },
+  h1: { fontSize: 18, fontWeight: 700, color: "#fff" },
   sub: { fontSize: 9, color: "#D8CFF7", marginTop: 2 },
   section: { marginTop: 16 },
   label: { fontSize: 8, color: MUTED, textTransform: "uppercase", letterSpacing: 0.6, marginBottom: 3 },
   row: { flexDirection: "row", justifyContent: "space-between", paddingVertical: 3 },
-  bold: { fontFamily: "Helvetica-Bold" },
+  bold: { fontWeight: 700 },
   muted: { color: MUTED },
   table: { borderWidth: 1, borderColor: LINE, borderRadius: 6 },
-  th: { flexDirection: "row", backgroundColor: LAV3, padding: 6, fontFamily: "Helvetica-Bold", fontSize: 9 },
+  th: { flexDirection: "row", backgroundColor: LAV3, padding: 6, fontWeight: 700, fontSize: 9 },
   td: { flexDirection: "row", padding: 6, borderTopWidth: 1, borderTopColor: LINE },
   total: { flexDirection: "row", justifyContent: "space-between", padding: 8, backgroundColor: INK, color: "#fff", borderRadius: 6, marginTop: 8 },
   footer: { position: "absolute", bottom: 24, left: 36, right: 36, fontSize: 8, color: MUTED, textAlign: "center" },

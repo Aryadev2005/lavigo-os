@@ -7,7 +7,7 @@
  *
  * Signature verification is OUR code: HMAC-SHA256 of the RAW body, compared with timingSafeEqual.
  */
-import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import type { PaymentMethod, PaymentPurpose } from "@prisma/client";
 import { env } from "../env";
 
@@ -31,12 +31,23 @@ export interface PaymentGateway {
 }
 
 /**
- * Razorpay requires reference_id to be unique per link, and a booking can have several links
- * (advance, then balance). So: booking code + purpose + a short random suffix; the booking code
- * also travels in `notes.booking_code`.
+ * Razorpay: "reference_id … Must be a unique number for each Payment Link. The maximum character
+ * limit supported is 40." (Payment Links API, create-standard; verified 26 Nov 2026.)
+ * A booking can have several links (advance, then balance), so: booking code + purpose + a short
+ * random suffix. The booking code also travels in `notes.booking_code`, which is what we match on.
+ * An over-long code is truncated and disambiguated with a hash of the full code.
  */
-export function referenceIdFor(bookingCode: string, purpose: PaymentPurpose): string {
-  return `${bookingCode}-${purpose.slice(0, 3)}-${randomBytes(3).toString("hex")}`;
+export const RAZORPAY_REFERENCE_ID_MAX = 40;
+/** Note values: the docs say 256 in one place and 255 in another; use the stricter. */
+export const RAZORPAY_NOTE_VALUE_MAX = 255;
+
+export function referenceIdFor(bookingCode: string, purpose: PaymentPurpose, suffix: string = randomBytes(3).toString("hex")): string {
+  const tail = `-${purpose.slice(0, 3)}-${suffix}`;
+  const full = `${bookingCode}${tail}`;
+  if (full.length <= RAZORPAY_REFERENCE_ID_MAX) return full;
+  const hash = createHash("sha256").update(bookingCode).digest("hex").slice(0, 6);
+  const room = Math.max(0, RAZORPAY_REFERENCE_ID_MAX - tail.length - hash.length - 1);
+  return `${bookingCode.slice(0, room)}~${hash}${tail}`.slice(0, RAZORPAY_REFERENCE_ID_MAX);
 }
 
 /** Razorpay rejects expiries less than ~15 minutes out; clamp to 20 minutes minimum. */
@@ -75,7 +86,7 @@ class RazorpayGateway implements PaymentGateway {
         // We send the link ourselves on WhatsApp.
         notify: { sms: false, email: false },
         reminder_enable: false,
-        notes: { booking_code: input.bookingCode, purpose: input.purpose },
+        notes: { booking_code: input.bookingCode.slice(0, RAZORPAY_NOTE_VALUE_MAX), purpose: input.purpose },
       }),
       signal: AbortSignal.timeout(15_000),
     });

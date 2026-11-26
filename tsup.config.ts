@@ -23,6 +23,11 @@ function copyRuntimeAssets() {
     mkdirSync(path.dirname(dest), { recursive: true });
     copyFileSync(src, dest);
   }
+  // Our own PDF fonts (src/server/pdf/shared.tsx resolves ./fonts/* relative to the module).
+  mkdirSync(path.join("dist", "fonts"), { recursive: true });
+  for (const f of ["NotoSans-Regular.ttf", "NotoSans-Bold.ttf", "OFL.txt"]) {
+    copyFileSync(path.join("src/server/pdf/fonts", f), path.join("dist", "fonts", f));
+  }
 }
 
 // Bundles the BullMQ worker into a single dist/worker.js for the production image.

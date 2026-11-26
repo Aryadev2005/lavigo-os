@@ -1,22 +1,24 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
 // The webhook route enqueues payment.apply; capture it instead of needing a running worker.
-const enqueued: { name: string; data: unknown }[] = [];
+const enqueued: { name: string; data: unknown; jobId?: string }[] = [];
+const queueMock = vi.hoisted(() => ({
+  enqueueReplacingFinished: vi.fn(),
+}));
 vi.mock("@/server/queue", () => ({
   enqueue: vi.fn(async (name: string, data: unknown) => {
     enqueued.push({ name, data });
   }),
-  enqueueReplacingFinished: vi.fn(async (name: string, data: unknown) => {
-    enqueued.push({ name, data });
-  }),
+  enqueueReplacingFinished: queueMock.enqueueReplacingFinished,
   closeQueues: vi.fn(),
 }));
+vi.mock("@/server/pubsub", () => ({ publish: vi.fn(async () => undefined) }));
 
 const { createBooking, evaluateForDeparture, expireHold } = await import("@/server/domain/bookings");
 const { applyPaymentEvent, createLink, recordManualPayment } = await import("@/server/domain/payments");
 const { normalizeRazorpayEvent, signWebhookBody, webhookSecret } = await import("@/server/payments/razorpay");
 const { buildPaymentLinkPaid } = await import("@/server/payments/simulate");
-const { ingestRazorpayWebhook } = await import("@/server/payments/webhook");
+const { ingestRazorpayWebhook, sweepWebhooks, MAX_WEBHOOK_ATTEMPTS } = await import("@/server/payments/webhook");
 const { seatsTaken } = await import("@/server/domain/inventory");
 const { db } = await import("@/server/db");
 const { ensureSettings, makeCustomer, makeDeparture, makeOwner } = await import("./fixtures");
@@ -32,6 +34,10 @@ beforeAll(async () => {
 });
 beforeEach(() => {
   enqueued.length = 0;
+  queueMock.enqueueReplacingFinished.mockReset();
+  queueMock.enqueueReplacingFinished.mockImplementation(async (name: string, data: unknown, jobId: string) => {
+    enqueued.push({ name, data, jobId });
+  });
 });
 afterAll(() => db.$disconnect());
 
@@ -203,5 +209,73 @@ describe("server-side price validation on booking (PRC-2, PRC-5)", () => {
 
     const { booking } = await createBooking({ ...base, pricePerPax: 1_250_000, confirmBelowFloor: true }, owner, { scheduleExpiry: false });
     expect(await db.auditLog.count({ where: { entityId: booking.id, action: "quote.below_floor" } })).toBe(1);
+  });
+});
+
+describe("webhook recovery (PAY-3)", () => {
+  async function paidEvent() {
+    const { booking, link } = await heldBookingWithLink();
+    const built = buildPaymentLinkPaid({ providerLinkId: link.providerLinkId, bookingCode: booking.code, amount: link.amount });
+    return { booking, link, built };
+  }
+
+  it("enqueue fails → Razorpay retries → re-enqueued with jobId = event id → applied exactly once", async () => {
+    const { booking, built } = await paidEvent();
+    queueMock.enqueueReplacingFinished.mockRejectedValueOnce(new Error("redis down"));
+
+    // First delivery: event persisted, enqueue throws (the route turns this into a 503).
+    await expect(ingestRazorpayWebhook(built.rawBody, headersFor(built.rawBody, built.eventId))).rejects.toThrow("redis down");
+    const ev = await db.webhookEvent.findUniqueOrThrow({
+      where: { provider_externalId: { provider: "RAZORPAY", externalId: built.eventId } },
+    });
+    expect(ev.processedAt).toBeNull();
+    expect(enqueued).toHaveLength(0);
+
+    // Razorpay retries: conflict on insert, unprocessed → re-enqueue, 200.
+    const retry = await ingestRazorpayWebhook(built.rawBody, headersFor(built.rawBody, built.eventId));
+    expect(retry).toMatchObject({ status: 200, duplicate: true, webhookEventId: ev.id });
+    expect(enqueued).toEqual([{ name: "payment.apply", data: { webhookEventId: ev.id }, jobId: ev.id }]);
+
+    await Promise.all([processWebhookEvent(ev.id), processWebhookEvent(ev.id)]);
+    expect(await db.payment.count({ where: { bookingId: booking.id } })).toBe(1);
+    expect((await db.booking.findUniqueOrThrow({ where: { id: booking.id } })).status).toBe("CONFIRMED");
+  });
+
+  it("the sweeper re-enqueues stale unprocessed events → applied exactly once; then leaves them alone", async () => {
+    const { booking, built } = await paidEvent();
+    queueMock.enqueueReplacingFinished.mockRejectedValueOnce(new Error("redis down"));
+    await expect(ingestRazorpayWebhook(built.rawBody, headersFor(built.rawBody, built.eventId))).rejects.toThrow();
+    const ev = await db.webhookEvent.findUniqueOrThrow({ where: { provider_externalId: { provider: "RAZORPAY", externalId: built.eventId } } });
+
+    // Too fresh: not swept yet (the original request may still be in flight).
+    await sweepWebhooks(new Date());
+    expect(enqueued.filter((e) => e.jobId === ev.id)).toHaveLength(0);
+
+    const later = new Date(ev.receivedAt.getTime() + 3 * 60_000);
+    await sweepWebhooks(later);
+    expect(enqueued.filter((e) => e.jobId === ev.id)).toHaveLength(1);
+
+    await processWebhookEvent(ev.id);
+    await processWebhookEvent(ev.id);
+    expect(await db.payment.count({ where: { bookingId: booking.id } })).toBe(1);
+
+    enqueued.length = 0;
+    await sweepWebhooks(later);
+    expect(enqueued.filter((e) => e.jobId === ev.id)).toHaveLength(0);
+  });
+
+  it(`gives up after ${MAX_WEBHOOK_ATTEMPTS} attempts: one error activity for the owner, no more re-enqueues`, async () => {
+    const { built } = await paidEvent();
+    const r = await ingestRazorpayWebhook(built.rawBody, headersFor(built.rawBody, built.eventId));
+    const id = (r as { webhookEventId: string }).webhookEventId;
+    await db.webhookEvent.update({ where: { id }, data: { attempts: MAX_WEBHOOK_ATTEMPTS, error: "boom" } });
+    const later = new Date(Date.now() + 3 * 60_000);
+
+    enqueued.length = 0;
+    await sweepWebhooks(later);
+    await sweepWebhooks(later);
+    expect(enqueued.filter((e) => e.jobId === id)).toHaveLength(0);
+    expect(await db.activityEvent.count({ where: { type: "webhook.failed", entityId: id } })).toBe(1);
+    expect((await db.webhookEvent.findUniqueOrThrow({ where: { id } })).error).toMatch(/^\[gave up\] boom/);
   });
 });

@@ -87,7 +87,7 @@ erDiagram
 | Identity | `User`, `AuditLog` | Roles OWNER/STAFF. `User.phone` receives approval alerts. |
 | Customers | `Customer`, `WaitlistEntry` | Upserted by phone (WA) or IGSID (IG). `marketingOptIn` gates campaigns. |
 | Catalog | `Trip`, `Departure`, `AddOn`, `Offer` | Price, cost and seats on Departure. Offers can be global (`departureId = null`) or departure-specific. |
-| Rules | `AgentSettings` | Floor, staff discount (`soloDiscountPerPax`), offers toggles, advance %, due days, GST. AI-only fields are v2. |
+| Rules | `AgentSettings` | Floor, staff discount (`soloDiscountPerPax`), offers toggles, advance %, due days, GST. `stackOffers` (default `false`, added by migration `pricing_stack_offers`): when false the engine applies only the single largest eligible offer; when true it sums all eligible offers (PRC-3, open question Q6). AI-only fields are v2. |
 | Conversations | `Conversation`, `Message`, (`AgentRun`, `AgentStep`: v2) | `@@unique([channel, externalThreadId])`. `lastInboundAt` drives the 24h window. A conversation belongs to a customer **or** a supplier. |
 | Deals | `Approval`, `Quote` | The approval's `suggestedPricePerPax` comes from the engine. A quote is the only thing a booking can be created from in the AI flow. |
 | Bookings | `Booking`, `Traveller`, `Document` | Status HELD → CONFIRMED → COMPLETED, or CANCELLED. CUSTOM bookings have no departure. |

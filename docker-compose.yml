@@ -1,6 +1,8 @@
 # Dev stack. Nothing but Docker is needed on the host.
 #   make up && make migrate && make seed  →  http://localhost:3000
 # Values here are dev defaults; put overrides in .env (git-ignored).
+# Parallel stacks (e.g. one per git worktree): set COMPOSE_PROJECT_NAME and the *_PORT
+# variables in that worktree's .env, plus APP_URL / S3_PUBLIC_ENDPOINT to match.
 
 x-app: &app
   build:
@@ -13,6 +15,8 @@ x-app: &app
   environment: &app-env
     NODE_ENV: development
     TZ: Asia/Kolkata
+    # Scopes BullMQ keys per stack (src/server/queue.ts).
+    COMPOSE_PROJECT_NAME: ${COMPOSE_PROJECT_NAME:-lavigo-os}
     APP_URL: ${APP_URL:-http://localhost:3000}
     DATABASE_URL: ${DATABASE_URL:-postgresql://lavigo:lavigo@postgres:5432/lavigo}
     REDIS_URL: ${REDIS_URL:-redis://redis:6379}
@@ -99,8 +103,8 @@ services:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minio}
       MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-minio12345}
     ports:
-      - "127.0.0.1:9000:9000"
-      - "127.0.0.1:9001:9001"
+      - "127.0.0.1:${MINIO_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - miniodata:/data
     healthcheck:
@@ -132,8 +136,8 @@ services:
   mailpit:
     image: axllent/mailpit:latest
     ports:
-      - "127.0.0.1:8025:8025"
-      - "127.0.0.1:1025:1025"
+      - "127.0.0.1:${MAILPIT_UI_PORT:-8025}:8025"
+      - "127.0.0.1:${MAILPIT_SMTP_PORT:-1025}:1025"
     healthcheck:
       test: ["CMD", "/mailpit", "readyz"]
       interval: 10s

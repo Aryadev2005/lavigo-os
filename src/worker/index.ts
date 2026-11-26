@@ -8,7 +8,7 @@ import type { Worker } from "bullmq";
 import { assertEnv } from "@/server/env";
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
-import { closeQueues, createWorker, QUEUES } from "@/server/queue";
+import { closeQueues, createWorker, QUEUES, registerRepeatables } from "@/server/queue";
 import { getRedis } from "@/server/redis";
 import { PROCESSORS } from "./jobs";
 
@@ -32,6 +32,7 @@ async function main() {
     ),
   );
   await Promise.all(workers.map((w) => w.waitUntilReady()));
+  await registerRepeatables();
   await writeFile(READY_FILE, String(Date.now())).catch(() => undefined);
   logger.info({ queues: QUEUES.length }, "worker ready");
 

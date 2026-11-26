@@ -1,6 +1,6 @@
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
-import { normalizeRazorpayEvent, verifyWebhookSignature } from "@/server/payments/razorpay";
+import { normalizeRazorpayEvent, RAZORPAY_REFERENCE_ID_MAX, referenceIdFor, verifyWebhookSignature } from "@/server/payments/razorpay";
 import { buildPaymentLinkPaid } from "@/server/payments/simulate";
 
 const SECRET = "whsec_test_123";
@@ -55,5 +55,29 @@ describe("normalizeRazorpayEvent", () => {
     const bad = JSON.parse(buildPaymentLinkPaid(link).rawBody);
     bad.payload.payment.entity.amount = 100.5;
     expect(normalizeRazorpayEvent(bad)).toBeNull();
+  });
+});
+
+describe("referenceIdFor (Razorpay: unique, max 40 chars)", () => {
+  it("is booking code + purpose + suffix for normal codes", () => {
+    expect(referenceIdFor("LVG-24901", "ADVANCE", "a1b2c3")).toBe("LVG-24901-ADV-a1b2c3");
+    expect(referenceIdFor("LVG-24901", "BALANCE")).toMatch(/^LVG-24901-BAL-[0-9a-f]{6}$/);
+  });
+
+  it("never exceeds 40 characters, and keeps long codes distinct", () => {
+    const a = referenceIdFor(`LVG-${"9".repeat(60)}1`, "BALANCE", "a1b2c3");
+    const b = referenceIdFor(`LVG-${"9".repeat(60)}2`, "BALANCE", "a1b2c3");
+    expect(a.length).toBeLessThanOrEqual(RAZORPAY_REFERENCE_ID_MAX);
+    expect(b.length).toBeLessThanOrEqual(RAZORPAY_REFERENCE_ID_MAX);
+    expect(a).not.toBe(b);
+    expect(a.endsWith("-BAL-a1b2c3")).toBe(true);
+    // Exactly at the limit is kept verbatim.
+    const code = `LVG-${"1".repeat(40 - 4 - 11)}`;
+    expect(referenceIdFor(code, "ADVANCE", "a1b2c3")).toBe(`${code}-ADV-a1b2c3`);
+  });
+
+  it("suffixes differ between links for the same booking", () => {
+    const ids = new Set(Array.from({ length: 50 }, () => referenceIdFor("LVG-24901", "ADVANCE")));
+    expect(ids.size).toBe(50);
   });
 });

@@ -6,6 +6,7 @@ import { afterPaymentCaptured } from "@/server/domain/payments/effects";
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
 import { normalizeRazorpayEvent } from "@/server/payments/razorpay";
+import { sweepWebhooks } from "@/server/payments/webhook";
 import { renderPaymentDocuments } from "@/server/pdf/render";
 import type { QueueName } from "@/server/queue";
 
@@ -44,6 +45,7 @@ export const PROCESSORS: Partial<Record<QueueName, Processor>> = {
     return createLink(d.bookingId, d.purpose);
   },
   "invoice.render": async (job) => renderPaymentDocuments(job.data as { bookingId: string; paymentId?: string }),
+  "webhooks.sweep": async () => sweepWebhooks(),
   "hold.expire": async (job) => {
     const outcome = await expireHold((job.data as { bookingId: string }).bookingId);
     logger.info({ bookingId: (job.data as { bookingId: string }).bookingId, outcome }, "hold.expire");

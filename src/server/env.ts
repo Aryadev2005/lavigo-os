@@ -22,6 +22,8 @@ const schema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
   APP_URL: z.url().default("http://localhost:3000"),
   TZ: z.string().default("Asia/Kolkata"),
+  /** Scopes BullMQ keys per stack (see queue.ts); set by docker compose. */
+  COMPOSE_PROJECT_NAME: optionalString,
   LOG_LEVEL: z.enum(["fatal", "error", "warn", "info", "debug", "trace", "silent"]).default("info"),
 
   DATABASE_URL: z.string().min(1),
