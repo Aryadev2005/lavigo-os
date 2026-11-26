@@ -1,5 +1,8 @@
 /** Queue → processor map. Queues without a processor yet are no-ops (later phases). */
-import type { Processor } from "bullmq";
+import type { Processor, WorkerOptions } from "bullmq";
+import { deliverMessage } from "@/server/channels/outbound";
+import type { InboundEventPayload } from "@/server/channels/types";
+import { applyStatus, ingestInbound, storeInboundMedia } from "@/server/domain/conversations/ingest";
 import { expireHold } from "@/server/domain/bookings";
 import { createAndSendLink, runReminders } from "@/server/domain/dues";
 import { applyPaymentEvent } from "@/server/domain/payments";
@@ -7,7 +10,7 @@ import { afterPaymentCaptured } from "@/server/domain/payments/effects";
 import { db } from "@/server/db";
 import { logger } from "@/server/logger";
 import { normalizeRazorpayEvent } from "@/server/payments/razorpay";
-import { sweepWebhooks } from "@/server/payments/webhook";
+import { beginWebhookAttempt, markWebhookError, markWebhookProcessed, sweepWebhooks } from "@/server/webhook-events";
 import { renderItinerary, renderPaymentDocuments } from "@/server/pdf/render";
 import { publish } from "@/server/pubsub";
 import type { QueueName } from "@/server/queue";
@@ -31,7 +34,55 @@ async function paymentApply(data: { webhookEventId: string }) {
   return result;
 }
 
+/** A status can arrive before our send stored the provider id; retry briefly, then give up quietly. */
+const UNKNOWN_STATUS_GRACE_MS = 2 * 60_000;
+
+/** inbound.process: one WhatsApp/Instagram message or status, from its persisted WebhookEvent. */
+async function inboundProcess(data: { webhookEventId: string }) {
+  const ev = await beginWebhookAttempt(data.webhookEventId);
+  if (ev.processedAt) return { skipped: "already processed" };
+  const item = ev.payload as unknown as InboundEventPayload;
+
+  if (item.type === "status") {
+    const r = await applyStatus(item.status);
+    if (r === "unknown" && Date.now() - ev.receivedAt.getTime() < UNKNOWN_STATUS_GRACE_MS) {
+      throw new Error("status for a message we haven't recorded yet");
+    }
+    await markWebhookProcessed(ev.id);
+    return { status: r };
+  }
+
+  const outcome = await ingestInbound(item.message);
+  // Media is fetched after the message is saved; a retry re-ingests (deduped) and retries the download.
+  if (item.message.media) await storeInboundMedia(outcome.messageId);
+  await markWebhookProcessed(ev.id);
+  return outcome;
+}
+
+/** Queue-specific worker settings (system design §8). Others: concurrency 1. */
+export const WORKER_OPTIONS: Partial<Record<QueueName, Omit<WorkerOptions, "connection" | "prefix">>> = {
+  "inbound.process": { concurrency: 10 },
+  // Global limiter: at most 10 provider sends per second across all workers.
+  "outbound.send": { concurrency: 5, limiter: { max: 10, duration: 1000 } },
+  "payment.apply": { concurrency: 5 },
+  "hold.expire": { concurrency: 5 },
+  "invoice.render": { concurrency: 2 },
+};
+
 export const PROCESSORS: Partial<Record<QueueName, Processor>> = {
+  "inbound.process": async (job) => {
+    const d = job.data as { webhookEventId: string };
+    try {
+      return await inboundProcess(d);
+    } catch (err) {
+      await markWebhookError(d.webhookEventId, err);
+      throw err;
+    }
+  },
+  "outbound.send": async (job) => {
+    const attempts = job.opts.attempts ?? 1;
+    return deliverMessage((job.data as { messageId: string }).messageId, { finalAttempt: job.attemptsMade + 1 >= attempts });
+  },
   "payment.apply": async (job) => {
     try {
       return await paymentApply(job.data as { webhookEventId: string });

@@ -10,6 +10,7 @@ export const EVENTS_CHANNEL = "events";
 
 export type AppEvent =
   | { type: "message.created"; payload: { conversationId: string; messageId: string } }
+  | { type: "message.updated"; payload: { conversationId: string; messageId: string } }
   | { type: "conversation.updated"; payload: { conversationId: string } }
   | { type: "approval.created"; payload: { approvalId: string } }
   | { type: "approval.decided"; payload: { approvalId: string } }

@@ -319,6 +319,12 @@ interface ChannelAdapter {
 - **Outbound policy** (`channels/outbound.ts`):
   - If now − `lastInboundAt` > 24h and the message isn't a template, return BLOCKED with reason `WINDOW_CLOSED`. Callers that know a template (reminders, RFQs, campaigns, follow-ups) send that template instead.
   - Sends go through the `outbound.send` queue: max 10 sends/second globally (well under Meta's limits; *confirm the tier*), 5 attempts, exponential backoff. 4xx errors other than 429 are not retried.
+- **Implementation notes (v1):**
+  - A webhook delivery is split into one `WebhookEvent` per item: `msg:<wamid>` for messages and `status:<wamid>:<status>` for delivery statuses (a message gets several). A duplicate whose `processedAt` is null is re-enqueued with jobId = event id, and `webhooks.sweep` covers WhatsApp and Instagram events as well as Razorpay ones.
+  - A status that arrives before the send has stored the provider id is retried for 2 minutes, then ignored. Statuses only move forward (✓ → ✓✓ → read).
+  - Marketing templates (`follow_up`, `seat_offer`) are blocked with `NOT_OPTED_IN` unless `Customer.marketingOptIn`. Instagram has no templates, so outside the window it is reply-when-they-write-again.
+  - Chat media (inbound and attachments) is stored as `Document` kind `OTHER` under the `chat/` key prefix. `/api/files/[id]` lets both roles open those; other `OTHER` documents stay owner-only.
+  - In dev, `META_APP_SECRET`/`WA_VERIFY_TOKEN` fall back to fixed dev values so `make inbound args='…'` (scripts/simulate-inbound.ts) can sign payloads. Production refuses to boot without them.
 
 **Templates to register with Meta on Thursday** (names are used verbatim in code and seed):
 

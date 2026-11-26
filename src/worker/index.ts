@@ -10,7 +10,7 @@ import { db } from "@/server/db";
 import { logger } from "@/server/logger";
 import { closeQueues, createWorker, QUEUES, registerRepeatables } from "@/server/queue";
 import { getRedis } from "@/server/redis";
-import { PROCESSORS } from "./jobs";
+import { PROCESSORS, WORKER_OPTIONS } from "./jobs";
 
 const READY_FILE = "/tmp/worker.ready";
 
@@ -29,6 +29,7 @@ async function main() {
           logger.info({ queue: name, jobId: job.id }, "no-op job (not built yet)");
           return { ok: true, noop: true };
         }),
+      WORKER_OPTIONS[name],
     ),
   );
   await Promise.all(workers.map((w) => w.waitUntilReady()));
