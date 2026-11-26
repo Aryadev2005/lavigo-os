@@ -9,6 +9,7 @@ import { sendBookingConfirmation, sendInvoiceToChat } from "@/server/domain/deal
 import * as suppliers from "@/server/domain/suppliers";
 import { renderAndSendVoucher } from "@/server/domain/suppliers/voucher-job";
 import { sendTickets, windowReminders, type TicketSendJob } from "@/server/domain/tickets/jobs";
+import { attributeBooking, sendCampaign } from "@/server/domain/departures/campaigns";
 import { createAndSendLink, runReminders } from "@/server/domain/dues";
 import { env } from "@/server/env";
 import { applyPaymentEvent } from "@/server/domain/payments";
@@ -132,6 +133,8 @@ export const PROCESSORS: Partial<Record<QueueName, Processor>> = {
   "voucher.send": async (job) => renderAndSendVoucher((job.data as { bookingId: string }).bookingId),
   "tickets.send": async (job) => sendTickets(job.data as TicketSendJob),
   "tickets.windowReminders": async () => windowReminders(),
+  "campaign.send": async (job) => sendCampaign((job.data as { campaignId: string }).campaignId),
+  "campaign.attribute": async (job) => attributeBooking((job.data as { bookingId: string }).bookingId),
   "notify.owner": async (job) => notifyOwnersOfApproval((job.data as { approvalId: string }).approvalId, env.APP_URL),
   "hold.expire": async (job) => {
     const outcome = await expireHold((job.data as { bookingId: string }).bookingId);
