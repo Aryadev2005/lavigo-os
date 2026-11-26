@@ -142,3 +142,51 @@ export function irctcPassengerText(group: { label: string; passengers: readonly 
   });
   return [head, ...lines].join("\n");
 }
+
+// ───────────────────────────── who still needs a ticket ─────────────────────────────
+
+export type BookingForTickets = {
+  id: string;
+  code: string;
+  pax: number;
+  customerName: string;
+  travellers: { id: string; fullName: string; age: number | null; gender: string | null; berthPref: string | null; isLead: boolean }[];
+};
+
+/**
+ * Parties still to ticket: each booking's pax minus the passengers already on a booked ticket.
+ * Travellers without details yet become placeholders, so the split still counts every seat.
+ */
+export function unticketed(bookings: readonly BookingForTickets[], ticketed: readonly Passenger[]): BookingParty[] {
+  const done = new Map<string, { count: number; ids: Set<string> }>();
+  for (const p of ticketed) {
+    const d = done.get(p.bookingId) ?? { count: 0, ids: new Set<string>() };
+    d.count += 1;
+    if (p.travellerId) d.ids.add(p.travellerId);
+    done.set(p.bookingId, d);
+  }
+  const out: BookingParty[] = [];
+  for (const b of bookings) {
+    const d = done.get(b.id);
+    const left = b.pax - (d?.count ?? 0);
+    if (left <= 0) continue;
+    const named: Passenger[] = b.travellers
+      .filter((t) => !d?.ids.has(t.id))
+      .slice(0, left)
+      .map((t) => ({ bookingId: b.id, travellerId: t.id, fullName: t.fullName, age: t.age, gender: t.gender, berthPref: t.berthPref }));
+    const pad: Passenger[] = Array.from({ length: left - named.length }, (_, k) => ({
+      bookingId: b.id,
+      travellerId: null,
+      fullName: `Traveller ${b.pax - left + named.length + k + 1} of ${b.code} (details pending)`,
+      age: null,
+      gender: null,
+      berthPref: null,
+    }));
+    const lead = b.travellers.find((t) => t.isLead)?.fullName ?? b.customerName;
+    out.push({ bookingId: b.id, label: partyLabel(lead, b.pax), passengers: [...named, ...pad] });
+  }
+  return out;
+}
+
+/** A stable fingerprint of a split, to detect that it changed between preview and confirm. */
+export const splitSignature = (groups: readonly TicketPlan[]) => groups.map((g) => g.passengers.map((p) => `${p.bookingId}:${p.travellerId ?? "-"}`).join(",")).join("|");
