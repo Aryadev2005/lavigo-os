@@ -89,9 +89,10 @@ services:
       retries: 20
 
   minio:
+    # dev only; prod uses managed S3-compatible storage via S3_* env.
     # MinIO stopped publishing official images in 2025; pgsty/minio is a maintained
-    # community build of the same server (and ships mc).
-    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    # community build of the same server (and ships mc). Pinned by digest.
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372
     command: ["server", "/data", "--console-address", ":9001"]
     environment:
       MINIO_ROOT_USER: ${S3_ACCESS_KEY:-minio}
@@ -108,7 +109,9 @@ services:
       retries: 20
 
   createbuckets:
-    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z
+    # dev only; prod uses managed S3-compatible storage via S3_* env.
+    # Same pinned image as minio: its bundled mc creates the bucket.
+    image: pgsty/minio:RELEASE.2026-08-04T00-00-00Z@sha256:b6bfe7239bfc83fb90d31612d9704d86039dd714f7904b3f1ad68f211e602372
     depends_on:
       minio:
         condition: service_healthy

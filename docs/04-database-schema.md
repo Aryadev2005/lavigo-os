@@ -1,6 +1,8 @@
 # Lavigo OS — Database Schema
 
-The source of truth is `docs/design/schema.prisma`. It has been validated with `prisma validate` and has 37 models and 47 enums. In Phase 0 it is copied to `prisma/schema.prisma`. After that, **`prisma/schema.prisma` is the source of truth**, and changes go in as new migrations.
+> **Source of truth:** since Phase 0, `prisma/schema.prisma` (plus its migrations) is the source of truth; `docs/design/schema.prisma` is a reference copy kept in sync.
+
+The original design source was `docs/design/schema.prisma`. It has been validated with `prisma validate` and has 37 models and 47 enums. In Phase 0 it is copied to `prisma/schema.prisma`. After that, **`prisma/schema.prisma` is the source of truth**, and changes go in as new migrations.
 
 > **v1 note (no AI):** the AI-only parts of the schema are **kept but unused in v1**, so v2 needs no migration on core tables:
 > - `AgentRun`, `AgentStep`, `Message.agentRunId`

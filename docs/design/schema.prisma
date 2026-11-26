@@ -67,6 +67,8 @@ model Customer {
   campaignRecipients CampaignRecipient[]
 
   @@index([name])
+  // Trigram index created by raw SQL in the init migration; declared here so Prisma doesn't drop it.
+  @@index([name(ops: raw("gin_trgm_ops"))], type: Gin, map: "customer_name_trgm")
 }
 
 // ───────────────────────────── Catalog ─────────────────────────────
@@ -500,6 +502,8 @@ model Booking {
   @@index([status])
   @@index([balanceDueDate])
   @@index([departureId])
+  // Trigram index created by raw SQL in the init migration; declared here so Prisma doesn't drop it.
+  @@index([code(ops: raw("gin_trgm_ops"))], type: Gin, map: "booking_code_trgm")
 }
 
 enum DocStatus {

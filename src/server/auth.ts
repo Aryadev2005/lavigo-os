@@ -21,8 +21,12 @@ const credentialsSchema = z.object({
 });
 
 /**
- * Client IP for rate limiting. Uses the LAST X-Forwarded-For hop: the one our own proxy
- * (Caddy) appended. Earlier hops are client-supplied and could be rotated to dodge AUTH-2.
+ * Client IP for rate limiting (AUTH-2).
+ *
+ * TRUST ASSUMPTION: exactly one trusted proxy (Caddy) sits in front of web and appends the
+ * real client IP to X-Forwarded-For, and the web port is never exposed directly in prod.
+ * So the LAST hop is the one Caddy wrote; earlier hops are client-supplied and could be
+ * rotated to dodge the lockout. If a second proxy/CDN is ever added, revisit this.
  */
 export function clientIp(headers: Headers): string {
   const hops = (headers.get("x-forwarded-for") ?? "").split(",").map((h) => h.trim()).filter(Boolean);

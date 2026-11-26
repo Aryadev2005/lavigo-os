@@ -23,6 +23,23 @@ import { hashPassword } from "../src/server/password";
 import { rupees } from "../src/server/money";
 import { addDays, formatDate, istDateString, istDateStringOf, istDateTime, todayIST } from "../src/server/time";
 
+// Refuse to wipe a production database by accident.
+if (process.env.NODE_ENV === "production") {
+  const demoOptIn = process.env.SEED_DEMO === "true";
+  const forced = process.argv.includes("--force");
+  if (!demoOptIn || !forced) {
+    console.error(
+      [
+        "Refusing to seed: NODE_ENV=production.",
+        "This seed TRUNCATES EVERY TABLE and loads demo data.",
+        `  SEED_DEMO=true: ${demoOptIn ? "yes" : "no"}   --force: ${forced ? "yes" : "no"}`,
+        "Both are required, e.g.: SEED_DEMO=true pnpm seed --force",
+      ].join("\n"),
+    );
+    process.exit(1);
+  }
+}
+
 const db = new PrismaClient();
 
 // ───────────────────────────── clock ─────────────────────────────
