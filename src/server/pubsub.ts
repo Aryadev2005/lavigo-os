@@ -14,6 +14,7 @@ export type AppEvent =
   | { type: "approval.created"; payload: { approvalId: string } }
   | { type: "approval.decided"; payload: { approvalId: string } }
   | { type: "payment.received"; payload: { bookingId: string; amount: number } }
+  | { type: "booking.updated"; payload: { bookingId: string } }
   | { type: "activity.created"; payload: { activityId: string; text: string; icon: string } }
   | { type: "toast"; payload: { text: string; icon?: string } };
 

@@ -1,6 +1,6 @@
 /**
  * Worker process: BullMQ consumers + repeatable jobs (docs/03-system-design.md §8).
- * Phase 0: every queue is registered with a no-op processor; real jobs land in src/worker/jobs/*.
+ * Processors live in ./jobs; queues without one yet are registered as no-ops.
  */
 
 import { rm, writeFile } from "node:fs/promises";
@@ -10,6 +10,7 @@ import { db } from "@/server/db";
 import { logger } from "@/server/logger";
 import { closeQueues, createWorker, QUEUES } from "@/server/queue";
 import { getRedis } from "@/server/redis";
+import { PROCESSORS } from "./jobs";
 
 const READY_FILE = "/tmp/worker.ready";
 
@@ -21,10 +22,14 @@ async function main() {
   await getRedis().ping();
 
   const workers: Worker[] = QUEUES.map((name) =>
-    createWorker(name, async (job) => {
-      logger.info({ queue: name, jobId: job.id }, "no-op job (phase 0)");
-      return { ok: true, noop: true };
-    }),
+    createWorker(
+      name,
+      PROCESSORS[name] ??
+        (async (job) => {
+          logger.info({ queue: name, jobId: job.id }, "no-op job (not built yet)");
+          return { ok: true, noop: true };
+        }),
+    ),
   );
   await Promise.all(workers.map((w) => w.waitUntilReady()));
   await writeFile(READY_FILE, String(Date.now())).catch(() => undefined);

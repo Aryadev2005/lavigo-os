@@ -11,6 +11,7 @@ export const QUEUES = [
   "inbound.process",
   "outbound.send",
   "payment.apply",
+  "payment.createLink",
   "invoice.render",
   "hold.expire",
   "reminders.daily",
@@ -61,6 +62,21 @@ export function getQueue(name: QueueName): Queue {
  */
 export async function enqueue<T extends object>(name: QueueName, data: T, opts: JobsOptions = {}) {
   return getQueue(name).add(name, data, opts);
+}
+
+/**
+ * Enqueue with a fixed jobId, replacing a FINISHED (completed/failed) job of the same id.
+ * Plain `jobId` dedupe would silently drop a legitimate retry (e.g. a webhook redelivered after
+ * its job exhausted its attempts). Waiting/active/delayed jobs are left alone: that's the dedupe.
+ */
+export async function enqueueReplacingFinished<T extends object>(name: QueueName, data: T, jobId: string, opts: JobsOptions = {}) {
+  const q = getQueue(name);
+  const existing = await q.getJob(jobId);
+  if (existing) {
+    const state = await existing.getState();
+    if (state === "completed" || state === "failed") await existing.remove();
+  }
+  return q.add(name, data, { ...opts, jobId });
 }
 
 export function createWorker<T = unknown, R = unknown>(
