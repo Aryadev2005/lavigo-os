@@ -51,7 +51,7 @@ export type PlanView = {
   locked: boolean;
   windowOpens: { label: string; short: string } | null;
   trend: { title: string; fares: number[]; today: number; rise: number } | null;
-  /** The pending split for travellers still to ticket (trains), with IRCTC text per ticket. */
+  /** The pending split for travellers still to ticket, with IRCTC text per ticket (the card shows it for trains). */
   split: { label: string; count: number; text: string }[];
   tickets: { idx: number; label: string; count: number; pnr: string | null; documentId: string | null }[];
 };
@@ -76,7 +76,7 @@ const shortName = (name: string) => {
 async function loadPlans(where: Prisma.TravelPlanWhereInput = {}) {
   return db.travelPlan.findMany({
     where,
-    orderBy: [{ travelDate: "asc" }, { createdAt: "asc" }],
+    orderBy: [{ createdAt: "asc" }, { id: "asc" }],
     include: {
       options: { orderBy: { createdAt: "asc" }, include: { fareSnapshots: { orderBy: { capturedAt: "asc" } } } },
       tickets: { orderBy: { idx: "asc" } },
@@ -125,7 +125,7 @@ async function buildPlan(plan: LoadedPlan, role: Role, now: Date): Promise<PlanV
       : null;
 
   const split =
-    kind !== "flight" && toTicket
+    toTicket
       ? pnrSplit(parties).map((g, i) => ({ label: g.label, count: g.passengers.length, text: irctcPassengerText(g, i + 1) }))
       : [];
 

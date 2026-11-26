@@ -24,6 +24,8 @@ const nextConfig: NextConfig = {
   experimental: {
     // Enables forbidden() → src/app/forbidden.tsx (403) for role checks in requireUser().
     authInterrupts: true,
+    // Ticket PDFs (TKT-7) and chat attachments go through server actions: 10 MB per file, 20 MB per confirm.
+    serverActions: { bodySizeLimit: "21mb" },
   },
   serverExternalPackages: ["@node-rs/argon2", "pino", "bullmq", "ioredis", "@react-pdf/renderer"],
   turbopack: {

@@ -77,3 +77,17 @@ export async function ticketNeeds(role: Role, now: Date = new Date()): Promise<N
   }
   return out;
 }
+
+/** Sidebar badge (TOD-7): ticket alerts plus booked group plans with travellers still to ticket. */
+export async function ticketBadgeCount(now: Date = new Date()): Promise<number> {
+  const [needs, booked] = await Promise.all([
+    ticketNeeds("STAFF", now),
+    db.travelPlan.findMany({
+      where: { status: "BOOKED", departureId: { not: null }, travelDate: { gte: todayIST(now) } },
+      select: { bookingId: true, departureId: true, tickets: { select: { status: true, passengers: true } } },
+    }),
+  ]);
+  let waiting = 0;
+  for (const p of booked) if (unticketed(await planBookings(p), ticketedPassengers(p.tickets)).length) waiting += 1;
+  return needs.length + waiting;
+}
