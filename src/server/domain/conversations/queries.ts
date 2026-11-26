@@ -1,8 +1,7 @@
 /**
  * Inbox reads (INB-5, INB-6, INB-8). Customer conversations only: supplier threads go to the
- * Supplier desk. "Waiting for reply" is derived, never stored: the customer wrote last and nothing
- * has gone out since (any outbound message, including automatic system ones, counts; blocked or
- * failed sends don't). Same rule as the Today list and the sidebar badge.
+ * Supplier desk. "Waiting for reply" comes from ./waiting.ts, the one definition shared with Today
+ * and the sidebar badge.
  */
 import { Prisma, type Channel, type ConversationStatus } from "@prisma/client";
 import { db } from "../../db";
@@ -10,6 +9,7 @@ import { inr } from "../../money";
 import { formatDate, formatIST, istDateString, todayIST } from "../../time";
 import { seatsTaken } from "../inventory";
 import { windowOpen, WINDOW_MS } from "../../channels/outbound";
+import { waitingIds } from "./waiting";
 
 export type InboxTab = "all" | "needs" | "paid" | "followup";
 export type Pill = { label: string; cls: "p-b" | "p-l" | "p-w" | "p-ok" | "p-g" };
@@ -40,20 +40,7 @@ export function conversationPill(status: ConversationStatus, waiting: boolean): 
 export const CHANNEL_LABEL: Record<Channel, string> = { WHATSAPP: "WhatsApp", INSTAGRAM: "Instagram", SANDBOX: "Sandbox", EMAIL: "Email" };
 export const CHANNEL_CLASS: Record<Channel, string> = { WHATSAPP: "wa", INSTAGRAM: "ig", SANDBOX: "sb", EMAIL: "em" };
 
-/** Ids of conversations whose customer is waiting for an answer. */
-export async function waitingIds(ids?: string[]): Promise<Set<string>> {
-  const rows = await db.$queryRaw<{ id: string }[]>`
-    SELECT c.id FROM "Conversation" c
-    WHERE c."customerId" IS NOT NULL AND c."supplierId" IS NULL
-      AND c."lastInboundAt" IS NOT NULL AND c.status <> 'CLOSED'
-      ${ids ? (ids.length ? Prisma.sql`AND c.id IN (${Prisma.join(ids)})` : Prisma.sql`AND false`) : Prisma.empty}
-      AND NOT EXISTS (
-        SELECT 1 FROM "Message" m
-        WHERE m."conversationId" = c.id AND m.direction = 'OUTBOUND'
-          AND m.status NOT IN ('BLOCKED', 'FAILED') AND m."createdAt" > c."lastInboundAt"
-      )`;
-  return new Set(rows.map((r) => r.id));
-}
+export { waitingIds } from "./waiting";
 
 /** "11:42 PM" today, "Yesterday", else "3 Nov". */
 export function listTime(at: Date, now: Date = new Date()): string {

@@ -323,7 +323,7 @@ interface ChannelAdapter {
   - A webhook delivery is split into one `WebhookEvent` per item: `msg:<wamid>` for messages and `status:<wamid>:<status>` for delivery statuses (a message gets several). A duplicate whose `processedAt` is null is re-enqueued with jobId = event id, and `webhooks.sweep` covers WhatsApp and Instagram events as well as Razorpay ones.
   - A status that arrives before the send has stored the provider id is retried for 2 minutes, then ignored. Statuses only move forward (✓ → ✓✓ → read).
   - Marketing templates (`follow_up`, `seat_offer`) are blocked with `NOT_OPTED_IN` unless `Customer.marketingOptIn`. Instagram has no templates, so outside the window it is reply-when-they-write-again.
-  - Chat media (inbound and attachments) is stored as `Document` kind `OTHER` under the `chat/` key prefix. `/api/files/[id]` lets both roles open those; other `OTHER` documents stay owner-only.
+  - Chat media (inbound and attachments) is stored as `Document` kind `CHAT_MEDIA` (keys under `chat/`). `/api/files/[id]` lets both roles open those and audits every download (customers send ID photos in chat); `OTHER` documents stay owner-only.
   - In dev, `META_APP_SECRET`/`WA_VERIFY_TOKEN` fall back to fixed dev values so `make inbound args='…'` (scripts/simulate-inbound.ts) can sign payloads. Production refuses to boot without them.
 
 **Templates to register with Meta on Thursday** (names are used verbatim in code and seed):

@@ -19,6 +19,7 @@ const ALLOWED: Record<DocumentKind, readonly Role[]> = {
   VOUCHER: ["OWNER", "STAFF"],
   TICKET: ["OWNER", "STAFF"],
   TRAVELLER_ID: ["OWNER", "STAFF"],
+  CHAT_MEDIA: ["OWNER", "STAFF"], // whoever works the inbox
   OTHER: ["OWNER"], // e.g. supplier bills that carry costs
 };
 
@@ -29,11 +30,10 @@ export async function GET(_req: Request, ctx: RouteContext<"/api/files/[id]">) {
   const { id } = await ctx.params;
   const doc = await db.document.findUnique({ where: { id } });
   if (!doc) return Response.json({ error: "not found" }, { status: 404 });
-  // Photos/PDFs customers send in chat (kind OTHER, key under chat/) are for whoever works the inbox.
-  const chatMedia = doc.kind === "OTHER" && doc.storageKey.startsWith("chat/");
-  if (!chatMedia && !ALLOWED[doc.kind].includes(user.role)) return Response.json({ error: "forbidden" }, { status: 403 });
+  if (!ALLOWED[doc.kind].includes(user.role)) return Response.json({ error: "forbidden" }, { status: 403 });
 
-  if (doc.kind === "TRAVELLER_ID") {
+  // Traveller IDs, and chat media (customers send ID photos in chat), leave a trail on every download.
+  if (doc.kind === "TRAVELLER_ID" || doc.kind === "CHAT_MEDIA") {
     await audit({ userId: user.id, action: "document.download", entityType: "Document", entityId: doc.id });
   }
 

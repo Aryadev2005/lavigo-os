@@ -240,7 +240,7 @@ export async function storeInboundMedia(messageId: string): Promise<"stored" | "
   const doc = await db.document.upsert({
     where: { storageKey: key },
     update: {},
-    create: { kind: "OTHER", storageKey: key, fileName, mimeType: file.mime, sizeBytes: file.bytes.length },
+    create: { kind: "CHAT_MEDIA", storageKey: key, fileName, mimeType: file.mime, sizeBytes: file.bytes.length },
   });
   await db.message.update({
     where: { id: msg.id },

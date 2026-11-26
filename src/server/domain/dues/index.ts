@@ -1,7 +1,7 @@
 /**
  * Payments & dues (SRS §4.6: PAY-4 … PAY-7) and the reminders.daily job.
  */
-import type { PaymentPurpose, Prisma } from "@prisma/client";
+import { Prisma, type PaymentPurpose } from "@prisma/client";
 import { audit } from "../../audit";
 import { renderTemplate, sendTemplate } from "../../channels/outbound";
 import { db } from "../../db";
@@ -67,21 +67,46 @@ export type DuesBoard = {
   lateCount: number;
 };
 
-/** Reminders actually sent per booking (automatic rules; ReminderLog SENT on SEND_REMINDER rules). */
-async function reminderCounts(bookingIds: string[]): Promise<Map<string, number>> {
-  if (!bookingIds.length) return new Map();
-  const grouped = await db.reminderLog.groupBy({
-    by: ["bookingId"],
-    where: { bookingId: { in: bookingIds }, status: "SENT", rule: { action: "SEND_REMINDER" } },
-    _count: { _all: true },
-  });
-  return new Map(grouped.map((g) => [g.bookingId, g._count._all]));
+/** Templates that count as a payment reminder, whoever sent them (rule, "Send link", "Remind all"). */
+export const REMINDER_TEMPLATES = ["payment_reminder", "payment_overdue"] as const;
+/** runReminders won't send another reminder to a booking that got one this recently. */
+export const REMINDER_COOLDOWN_MS = 24 * 3_600_000;
+
+/**
+ * Reminder messages that went to each booking: reminder-template messages tagged with the booking
+ * (payload.bookingId, or the booking_code variable on older rows), plus SENT ReminderLog rows of
+ * SEND_REMINDER rules that have no surviving message. Blocked/failed sends don't count.
+ */
+async function reminderCounts(bookings: { id: string; code: string }[], since?: Date): Promise<Map<string, number>> {
+  if (!bookings.length) return new Map();
+  const ids = bookings.map((b) => b.id);
+  const rows = await db.$queryRaw<{ id: string; n: bigint }[]>`
+    SELECT b.id, (
+      (SELECT count(*) FROM "Message" m
+        WHERE m.kind = 'TEMPLATE' AND m.direction = 'OUTBOUND' AND m.status NOT IN ('BLOCKED', 'FAILED')
+          AND m.payload->>'template' IN (${Prisma.join([...REMINDER_TEMPLATES])})
+          AND (m.payload->>'bookingId' = b.id OR m.payload->'vars'->>'booking_code' = b.code)
+          ${since ? Prisma.sql`AND m."createdAt" >= ${since}` : Prisma.empty})
+      +
+      (SELECT count(*) FROM "ReminderLog" l JOIN "ReminderRule" r ON r.id = l."ruleId"
+        WHERE l."bookingId" = b.id AND l.status = 'SENT' AND r.action = 'SEND_REMINDER'
+          AND (l."messageId" IS NULL OR NOT EXISTS (SELECT 1 FROM "Message" x WHERE x.id = l."messageId"))
+          ${since ? Prisma.sql`AND l."createdAt" >= ${since}` : Prisma.empty})
+    ) AS n
+    FROM "Booking" b WHERE b.id IN (${Prisma.join(ids)})`;
+  return new Map(rows.map((r) => [r.id, Number(r.n)]));
+}
+
+/** Did any reminder go to this booking in the last 24h (rule, manual link or remind-all)? */
+export async function remindedRecently(b: { id: string; code: string }, now: Date = new Date()): Promise<boolean> {
+  const counts = await reminderCounts([b], new Date(now.getTime() - REMINDER_COOLDOWN_MS));
+  return (counts.get(b.id) ?? 0) > 0;
 }
 
 export async function getDuesBoard(now: Date = new Date()): Promise<DuesBoard> {
   const today = todayIST(now);
   const open = await loadOpenBookings();
-  const counts = await reminderCounts(open.map((b) => b.id));
+  const counts = await reminderCounts(open);
 
   const rows: DueRow[] = open
     .map((b) => ({
@@ -219,6 +244,7 @@ export async function createAndSendLink(data: {
     const b = await db.booking.findUniqueOrThrow({ where: { id: data.bookingId }, include: openBookingInclude });
     const r = await sendTemplate({ customerId: b.customerId }, "payment_reminder", reminderVars(b, link.shortUrl), {
       authorUserId: data.requestedById,
+      meta: { bookingId: b.id },
     });
     sent = r.sent;
     if (!r.sent) reason = r.reason;
@@ -283,7 +309,7 @@ export async function runReminders(now: Date = new Date()): Promise<RunReminders
       continue;
     }
     try {
-      const outcome = await act(p, byId.get(p.bookingId)!, ruleById.get(p.ruleId)!.templateName, today);
+      const outcome = await act(p, byId.get(p.bookingId)!, ruleById.get(p.ruleId)!.templateName, today, now);
       await db.reminderLog.update({
         where: { id: claimed },
         data: { status: outcome.status, messageId: outcome.messageId ?? null, detail: outcome.detail },
@@ -315,11 +341,13 @@ async function claim(p: PlannedReminder): Promise<string | null> {
 
 type ActOutcome = { status: "SENT" | "SKIPPED"; messageId?: string; detail: string };
 
-async function act(p: PlannedReminder, b: OpenBooking, templateName: string | null, today: Date): Promise<ActOutcome> {
+async function act(p: PlannedReminder, b: OpenBooking, templateName: string | null, today: Date, now: Date): Promise<ActOutcome> {
   const balance = b.totalAmount - b.paidAmount;
   const late = Math.max(0, daysLate(b.balanceDueDate, today));
 
   if (p.action === "SEND_REMINDER") {
+    // Someone already sent a reminder or link today (manual "Send link", "Remind all", another rule).
+    if (await remindedRecently(b, now)) return { status: "SKIPPED", detail: "reminded in the last 24h" };
     let link;
     try {
       link = await createLink(b.id, "BALANCE");
@@ -327,7 +355,9 @@ async function act(p: PlannedReminder, b: OpenBooking, templateName: string | nu
       if (err instanceof NothingToCollect) return { status: "SKIPPED", detail: "nothing to collect" };
       throw err;
     }
-    const r = await sendTemplate({ customerId: b.customerId }, templateName ?? "payment_reminder", reminderVars(b, link.shortUrl));
+    const r = await sendTemplate({ customerId: b.customerId }, templateName ?? "payment_reminder", reminderVars(b, link.shortUrl), {
+      meta: { bookingId: b.id },
+    });
     if (!r.sent) return { status: "SKIPPED", detail: r.reason };
     await activity("reminder.sent", "⏰", `Balance reminder sent to ${b.customer.name} (${inr(balance)}${late ? `, ${late} days late` : ""})`, b.id);
     return { status: "SENT", messageId: r.messageId, detail: `${templateName} · ${link.shortUrl}` };

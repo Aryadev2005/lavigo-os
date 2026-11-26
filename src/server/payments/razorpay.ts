@@ -11,7 +11,6 @@ import { createHash, createHmac, randomBytes, timingSafeEqual } from "node:crypt
 import type { PaymentMethod, PaymentPurpose } from "@prisma/client";
 import { env } from "../env";
 
-export const DEV_WEBHOOK_SECRET = "dev-razorpay-webhook-secret";
 const API = "https://api.razorpay.com/v1";
 
 export type CreateLinkInput = {
@@ -127,12 +126,11 @@ export function setPaymentGateway(g: PaymentGateway | undefined) {
   gateway = g;
 }
 
-/** Webhook secret. Outside production an unset secret falls back to the dev default (fake mode). */
+/** Webhook secret. Dev/test fallback lives only in env.ts; production refuses to boot without it. */
 export function webhookSecret(): string {
-  const s = env.RAZORPAY_WEBHOOK_SECRET;
-  if (s) return s;
-  if (env.isProd) throw new Error("RAZORPAY_WEBHOOK_SECRET is not set"); // env.ts already refuses to boot
-  return DEV_WEBHOOK_SECRET;
+  const s = env.secrets.RAZORPAY_WEBHOOK_SECRET;
+  if (!s) throw new Error("RAZORPAY_WEBHOOK_SECRET is not set");
+  return s;
 }
 
 export function signWebhookBody(rawBody: string | Buffer, secret: string): string {

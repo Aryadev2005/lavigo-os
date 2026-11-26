@@ -538,6 +538,7 @@ enum DocumentKind {
   VOUCHER
   TICKET
   TRAVELLER_ID
+  CHAT_MEDIA // photos/PDFs exchanged in the inbox (may contain traveller IDs); both roles, every download audited
   OTHER
 }
 

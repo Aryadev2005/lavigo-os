@@ -47,7 +47,7 @@ export default async function Page() {
           <small>Enquiries today</small>
           <b>{k.enquiriesToday}</b>
           <em className={k.enquiriesWaiting > 0 ? "w" : undefined}>
-            {k.enquiriesReplied} replied · {k.enquiriesWaiting} waiting for a reply
+            {k.enquiriesReplied} replied · {k.enquiriesWaiting} of today&apos;s still waiting
           </em>
         </div>
         {k.profit ? (

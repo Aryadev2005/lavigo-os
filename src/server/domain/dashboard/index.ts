@@ -9,6 +9,7 @@ import type { Role } from "@prisma/client";
 import { db } from "../../db";
 import { inr, inrLakh, pct, toBps } from "../../money";
 import { addDays, daysBetween, formatDate, formatIST, istStartOfDay, monthStart, todayIST } from "../../time";
+import { waitingConversations } from "../conversations/waiting";
 import { getLateBookings } from "../dues";
 
 // ───────────────────────────── KPIs (TOD-1) ─────────────────────────────
@@ -38,24 +39,21 @@ async function collectedBetween(from: Date, to: Date): Promise<number> {
   return r._sum.amount ?? 0;
 }
 
-/** Conversations whose first inbound message arrived today (IST), split by whether the team has replied. */
+/**
+ * Today's enquiries: customer conversations whose FIRST inbound message arrived today (IST).
+ * "Still waiting" is the shared waiting-for-a-reply rule (any age), so this KPI and Needs-you
+ * (waiting > 30 min, any day) can't contradict each other: the KPI is a subset by scope.
+ */
 async function enquiriesToday(today: Date) {
-  const rows = await db.$queryRaw<{ replied: boolean }[]>`
-    WITH firsts AS (
-      SELECT m."conversationId" AS id, min(m."createdAt") AS first_in
-      FROM "Message" m
-      JOIN "Conversation" c ON c.id = m."conversationId"
-      WHERE m.direction = 'INBOUND' AND c."customerId" IS NOT NULL
-      GROUP BY m."conversationId"
-    )
-    SELECT EXISTS (
-      SELECT 1 FROM "Message" o
-      WHERE o."conversationId" = f.id AND o.direction = 'OUTBOUND' AND o."createdAt" > f.first_in
-    ) AS replied
-    FROM firsts f
-    WHERE f.first_in >= ${istStartOfDay(today)} AND f.first_in < ${istStartOfDay(addDays(today, 1))}`;
-  const replied = rows.filter((r) => r.replied).length;
-  return { total: rows.length, replied, waiting: rows.length - replied };
+  const rows = await db.$queryRaw<{ id: string }[]>`
+    SELECT m."conversationId" AS id
+    FROM "Message" m
+    JOIN "Conversation" c ON c.id = m."conversationId"
+    WHERE m.direction = 'INBOUND' AND c."customerId" IS NOT NULL AND c."supplierId" IS NULL
+    GROUP BY m."conversationId"
+    HAVING min(m."createdAt") >= ${istStartOfDay(today)} AND min(m."createdAt") < ${istStartOfDay(addDays(today, 1))}`;
+  const waiting = await waitingConversations({ ids: rows.map((r) => r.id) });
+  return { total: rows.length, replied: rows.length - waiting.length, waiting: waiting.length };
 }
 
 export async function getKpis(role: Role, now: Date = new Date()): Promise<Kpis> {
@@ -114,22 +112,8 @@ export const FARE_BOOK_WITHIN_DAYS = 21; // travel this close and not booked →
 export const LOW_SEATS_BPS = 4000; // < 40% sold
 export const LOW_SEATS_WITHIN_DAYS = 90;
 
-/** Conversations where the customer spoke last (no outbound message since their last inbound). */
-export async function waitingConversations(olderThan: Date) {
-  return db.$queryRaw<{ id: string; name: string; lastInboundAt: Date }[]>`
-    SELECT c.id, cu.name, c."lastInboundAt"
-    FROM "Conversation" c
-    JOIN "Customer" cu ON cu.id = c."customerId"
-    WHERE c."lastInboundAt" IS NOT NULL AND c."supplierId" IS NULL
-      AND c."lastInboundAt" < ${olderThan}
-      AND c.status <> 'CLOSED'
-      AND NOT EXISTS (
-        SELECT 1 FROM "Message" m
-        WHERE m."conversationId" = c.id AND m.direction = 'OUTBOUND' AND m.status NOT IN ('BLOCKED', 'FAILED')
-          AND m."createdAt" > c."lastInboundAt"
-      )
-    ORDER BY c."lastInboundAt" ASC`;
-}
+/** Today and the badge use the inbox's definition (conversations/waiting.ts). */
+export { waitingConversations } from "../conversations/waiting";
 
 function ago(from: Date, now: Date): string {
   const mins = Math.max(1, Math.round((now.getTime() - from.getTime()) / 60_000));
@@ -183,7 +167,7 @@ async function approvalNeeds(role: Role): Promise<NeedItem[]> {
 }
 
 async function waitingNeeds(now: Date): Promise<NeedItem[]> {
-  const rows = await waitingConversations(new Date(now.getTime() - WAITING_REPLY_MINUTES * 60_000));
+  const rows = await waitingConversations({ olderThan: new Date(now.getTime() - WAITING_REPLY_MINUTES * 60_000) });
   if (!rows.length) return [];
   const oldest = rows[0]!;
   return [

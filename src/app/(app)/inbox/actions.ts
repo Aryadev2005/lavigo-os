@@ -82,7 +82,7 @@ export async function sendAttachmentAction(form: FormData): Promise<SendActionRe
   const fileName = `${base}.${ext}`;
   const key = `chat/${conversationId}/out-${randomUUID()}.${ext}`;
   await getStorage().put(key, bytes, mime);
-  const doc = await db.document.create({ data: { kind: "OTHER", storageKey: key, fileName, mimeType: mime, sizeBytes: bytes.length } });
+  const doc = await db.document.create({ data: { kind: "CHAT_MEDIA", storageKey: key, fileName, mimeType: mime, sizeBytes: bytes.length } });
   logger.info({ conversationId, documentId: doc.id, mime, size: bytes.length }, "chat attachment stored");
   return done(await send(conversationId, { type: "document", documentId: doc.id, caption }, { userId: user.id }));
 }
