@@ -1,6 +1,7 @@
 /**
  * Convenience redirect to /login for signed-out users. NOT the security boundary:
- * pages, actions and queries enforce auth with requireUser() (src/server/rbac.ts).
+ * pages, actions and queries enforce auth with requireUser() (src/server/rbac.ts). /api/stream is
+ * excluded so an EventSource gets a 401 from the route instead of a redirect to HTML.
  */
 import NextAuth from "next-auth";
 import type { NextFetchEvent, NextRequest } from "next/server";
@@ -15,5 +16,5 @@ export function proxy(request: NextRequest, event: NextFetchEvent) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|images/|fonts/|api/health|api/webhooks|dev/pay).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|images/|fonts/|api/health|api/webhooks|api/stream|dev/pay).*)"],
 };
