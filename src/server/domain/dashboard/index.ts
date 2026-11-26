@@ -12,6 +12,7 @@ import { addDays, daysBetween, formatDate, formatIST, istStartOfDay, monthStart,
 import { waitingConversations } from "../conversations/waiting";
 import { getLateBookings } from "../dues";
 import { rfqNeeds } from "../suppliers/needs-you";
+import { ticketNeeds } from "../tickets/needs-you";
 
 // ───────────────────────────── KPIs (TOD-1) ─────────────────────────────
 
@@ -106,9 +107,6 @@ export type NeedItem = {
 
 export const WAITING_REPLY_MINUTES = 30;
 export const LATE_FLAG_DAYS = 7;
-export const FARE_RISE_BPS = 500; // fare up ≥ 5% in 14 days
-export const FARE_WINDOW_DAYS = 14;
-export const FARE_BOOK_WITHIN_DAYS = 21; // travel this close and not booked → alert
 export const LOW_SEATS_BPS = 4000; // < 40% sold
 export const LOW_SEATS_WITHIN_DAYS = 90;
 
@@ -223,65 +221,6 @@ async function lateNeeds(now: Date): Promise<NeedItem[]> {
   }));
 }
 
-async function fareNeeds(role: Role, now: Date): Promise<NeedItem[]> {
-  const today = todayIST(now);
-  const since = new Date(now.getTime() - FARE_WINDOW_DAYS * 86_400_000);
-  const plans = await db.travelPlan.findMany({
-    where: { status: { not: "BOOKED" }, travelDate: { gte: today } },
-    include: {
-      booking: { select: { pax: true, customer: { select: { name: true } } } },
-      departure: { select: { id: true } },
-      options: {
-        where: { disqualified: false },
-        include: { fareSnapshots: { where: { capturedAt: { gte: since } }, orderBy: { capturedAt: "asc" } } },
-      },
-    },
-  });
-  const out: NeedItem[] = [];
-  for (const plan of plans) {
-    const tracked = plan.options.filter((o) => o.fareSnapshots.length >= 2);
-    const rising = tracked
-      .map((o) => {
-        const first = o.fareSnapshots[0]!.farePerPax;
-        const last = o.fareSnapshots.at(-1)!.farePerPax;
-        return { o, first, last, riseBps: first > 0 ? toBps(last - first, first) : 0 };
-      })
-      .filter((x) => x.riseBps >= FARE_RISE_BPS)
-      .sort((a, b) => b.riseBps - a.riseBps)[0];
-    const daysToTravel = daysBetween(today, plan.travelDate);
-    const urgent = daysToTravel <= FARE_BOOK_WITHIN_DAYS && plan.options.length > 0;
-    if (!rising && !urgent) continue;
-
-    const mode = (rising?.o.mode ?? plan.options[0]?.mode ?? "FLIGHT").toLowerCase();
-    const who = plan.booking?.customer.name ? `${plan.booking.customer.name} family` : plan.label;
-    const parts = [who];
-    if (rising) parts.push(`up ${pct(rising.riseBps, 0)} in ${FARE_WINDOW_DAYS} days`);
-    if (rising && role === "OWNER") {
-      const pax = plan.booking?.pax ?? (plan.departureId ? await soldSeats(plan.departureId) : 0);
-      const keep = (plan.budgetPerPax - rising.last - rising.o.extrasPerPax) * pax;
-      if (keep > 0) parts.push(`booking today keeps ${inr(keep)} extra profit`);
-    }
-    if (!rising) parts.push(`travel in ${daysToTravel} days, tickets not booked`);
-    out.push({
-      key: `fare:${plan.id}`,
-      icon: "✈",
-      tone: "lav",
-      title: rising ? `${plan.destination} ${mode} fare is rising: book soon` : `${plan.destination}: book ${mode} tickets now`,
-      detail: parts.join(" · "),
-      action: { label: "Open", href: `/tickets?plan=${plan.id}` },
-    });
-  }
-  return out;
-}
-
-async function soldSeats(departureId: string): Promise<number> {
-  const r = await db.booking.aggregate({
-    where: { departureId, status: { in: ["HELD", "CONFIRMED", "COMPLETED"] } },
-    _sum: { pax: true },
-  });
-  return r._sum.pax ?? 0;
-}
-
 /**
  * Past travellers who could fill a departure: customers with a CONFIRMED/COMPLETED booking
  * elsewhere, not already booked on it. The Departures phase refines this into the campaign audience.
@@ -326,7 +265,7 @@ export async function getNeedsYou(role: Role, now: Date = new Date()): Promise<N
     waitingNeeds(now),
     rfqNeeds(now),
     lateNeeds(now),
-    fareNeeds(role, now),
+    ticketNeeds(role, now),
     lowSeatNeeds(now),
     quoteNeeds(now),
   ]);
