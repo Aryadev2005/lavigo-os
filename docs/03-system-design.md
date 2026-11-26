@@ -275,6 +275,14 @@ All AI/LLM work is **v2** (see `01-SRS.md` §1.1, and Appendix A of this documen
 
 The client never sends a price the server trusts. Every price is re-derived on the server; the requested value is only an input to the engine.
 
+**Implementation notes (v1, P4).**
+- Prices move as integer paise. `sendQuote` quotes the engine's `quotePricePerPax` for the requested price (never above A), and writes nothing when `canQuote` refuses. A quote-card send needs the 24h window (it's free text); outside it the action is refused before any row is written.
+- `askOwner` keeps one open request per conversation (a newer ask expires the older). `suggestedPricePerPax` = the charm counter when the ask is below F, else the ask (capped at A). The request expires with the quote validity (`approval.expire`).
+- Staff may use an owner decision for the same conversation + departure + pax: `decidedPricePerPax` becomes their minimum.
+- Payment link from a quote: if the quote was authorised by the OWNER below L or F (AuditLog `quote.below_limit` / `quote.below_floor` on the Quote), the seat hold re-validates with the owner's authority, so staff can send the link. Sandbox chats book with source `WHATSAPP` (no `SANDBOX` source in the enum).
+- Confirmations (DESK-6) go only to bookings with a `conversationId` (deals from chat). The invoice is sent once (`Document.sentAt`) and only inside the window.
+- The guardrail meter's scale is computed from role-visible values only, so for STAFF no marker position reveals the floor. Note: `L = max(F, A − s)`, so when `A − s < F` the staff limit staff see equals the floor.
+
 ### 6.2 Rule-based supplier-quote parser (`src/server/domain/suppliers/parser.ts`, pure, unit tested)
 
 1. Normalise: lowercase; strip `₹`, `rs`, `inr`, `/-`; expand `2.1k` to 2100; remove thousands separators.

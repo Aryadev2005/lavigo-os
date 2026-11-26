@@ -8,6 +8,7 @@ import { Thread } from "@/components/inbox/thread";
 import { SandboxPhone, SandboxPicker } from "@/components/sandbox/sandbox";
 import { listSandboxConversations } from "@/server/domain/conversations";
 import { getThread, listOpenDepartures, listSendableTemplates } from "@/server/domain/conversations/queries";
+import { getDealPanel } from "@/server/domain/deals/queries";
 import { requireUser } from "@/server/rbac";
 
 export const metadata = { title: "Sandbox" };
@@ -19,11 +20,15 @@ export default async function Page(props: PageProps<"/sandbox">) {
   const conversations = await listSandboxConversations();
   const selected = (Array.isArray(sp.c) ? sp.c[0] : sp.c) ?? conversations[0]?.id;
   const thread = selected ? await getThread(selected, user.id) : null;
-  const [departures, templates] = await Promise.all([listOpenDepartures(), thread ? listSendableTemplates(thread.customer.marketingOptIn) : []]);
+  const [departures, templates, deal] = await Promise.all([
+    listOpenDepartures(),
+    thread ? listSendableTemplates(thread.customer.marketingOptIn) : [],
+    thread ? getDealPanel(thread.id, user.role) : null,
+  ]);
 
   return (
     <div className="wrap">
-      <LiveRefresh types={["message.created", "message.updated", "conversation.updated"]} />
+      <LiveRefresh types={["message.created", "message.updated", "conversation.updated", "approval.created", "approval.decided", "booking.updated"]} />
       <SandboxPicker conversations={conversations} selectedId={thread?.id ?? null} />
       <div className="sbx" style={{ marginTop: 14 }}>
         {thread ? (
@@ -38,7 +43,7 @@ export default async function Page(props: PageProps<"/sandbox">) {
               </div>
               <div style={{ flex: 1, minHeight: 0, display: "flex" }}>
                 <div style={{ flex: 1, display: "flex", minWidth: 0 }}>
-                  <Thread thread={thread} departures={departures} templates={templates} hideHeaderLinks />
+                  <Thread thread={thread} departures={departures} templates={templates} hideHeaderLinks deal={deal} />
                 </div>
               </div>
             </div>

@@ -207,3 +207,10 @@ a.conv{color:inherit;text-decoration:none}
 .sbx .phone .thead{background:#075E54;color:#fff;border:0}
 .sbx .phone .thead small{color:#cfe9e4}
 @media(max-width:900px){.sbx{grid-template-columns:1fr;height:auto}.sbx .phone{height:560px}}
+
+/* P4 deal desk */
+.qpop.qbuilder{max-height:min(70vh,560px);overflow:auto}
+.qb-row{display:flex;gap:8px;flex-wrap:wrap}
+.dealbar{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:8px 14px;background:#fff;border-top:1px solid var(--line);font-size:13px}
+.ipanel .approval .acts .btn{flex:1 1 auto}
+.ipanel .kv,.qbuilder .kv{gap:12px}.ipanel .kv b,.qbuilder .kv b{text-align:right}

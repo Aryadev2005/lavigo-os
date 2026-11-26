@@ -755,6 +755,9 @@ export async function sendFollowUp(input: { conversationId: string }, actor: Dea
     if (r.reason === "NOT_OPTED_IN") {
       throw new DealError("NOT_OPTED_IN", "The 24-hour window is closed and this customer hasn't opted in to follow-ups. Wait for them to write.");
     }
+    if (r.reason === "NO_TEMPLATES_ON_CHANNEL") {
+      throw new DealError("WINDOW_CLOSED", "Instagram allows no templates: you can follow up once the customer writes again.");
+    }
     throw new DealError("SEND_BLOCKED", `Follow-up not sent (${r.reason})`, r.reason);
   }
   await db.conversation.updateMany({ where: { id: conv.id, status: "FOLLOW_UP" }, data: { status: "QUOTED" } });

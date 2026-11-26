@@ -243,6 +243,7 @@ export async function getThread(conversationId: string, viewerId: string, now: D
     },
     lead: {
       departureId: c.interestedDepartureId,
+      departureCode: c.interestedDeparture?.code ?? null,
       tripLabel: c.interestedDeparture ? `${c.interestedDeparture.trip.title} · ${formatDate(c.interestedDeparture.startDate)}` : null,
       pax: c.paxCount,
       sourceNote: c.sourceNote,
@@ -266,7 +267,7 @@ export async function listOpenDepartures(now: Date = new Date()) {
     orderBy: { startDate: "asc" },
     select: { id: true, code: true, startDate: true, trip: { select: { title: true } } },
   });
-  return deps.map((d) => ({ id: d.id, label: `${d.trip.title} · ${formatDate(d.startDate)}` }));
+  return deps.map((d) => ({ id: d.id, code: d.code, label: `${d.trip.title} · ${formatDate(d.startDate)}` }));
 }
 
 /** Editable quick-insert text for a departure: itinerary, inclusions and list price from the DB. */

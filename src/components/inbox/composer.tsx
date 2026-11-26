@@ -8,9 +8,10 @@ import type { Channel } from "@prisma/client";
 import { useRouter } from "next/navigation";
 import { useRef, useState, useTransition } from "react";
 import { departureSnippetAction, sendAttachmentAction, sendTemplateAction, sendTextAction } from "@/app/(app)/inbox/actions";
+import { QuoteBuilder } from "@/components/deals/quote-builder";
 import { useToast } from "@/components/shell/toast";
 
-export type ComposerDeparture = { id: string; label: string };
+export type ComposerDeparture = { id: string; code: string; label: string };
 export type ComposerTemplate = { name: string; purpose: string; bodyPreview: string; variables: string[] };
 
 const VAR_LABEL: Record<string, string> = {
@@ -34,6 +35,8 @@ export function Composer(props: {
   window: { open: boolean; closesAt: string | null; neverWrote: boolean };
   firstName: string;
   tripLabel: string | null;
+  departureCode: string | null;
+  pax: number | null;
   departures: ComposerDeparture[];
   templates: ComposerTemplate[];
 }) {
@@ -42,6 +45,7 @@ export function Composer(props: {
   const [text, setText] = useState("");
   const [pending, start] = useTransition();
   const [quick, setQuick] = useState(false);
+  const [builder, setBuilder] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
 
@@ -156,6 +160,15 @@ export function Composer(props: {
 
   return (
     <div style={{ position: "relative" }}>
+      {builder ? (
+        <QuoteBuilder
+          conversationId={props.conversationId}
+          departures={props.departures}
+          defaultCode={props.departures.some((d) => d.code === props.departureCode) ? props.departureCode : null}
+          defaultPax={props.pax}
+          onClose={() => setBuilder(false)}
+        />
+      ) : null}
       {quick ? (
         <div className="qpop">
           <b style={{ fontSize: 13 }}>Insert trip details</b>
@@ -173,8 +186,17 @@ export function Composer(props: {
         </div>
       ) : null}
       <div className="compose">
-        <button type="button" className="ib2" title="Insert trip details" aria-label="Insert trip details" onClick={() => setQuick((q) => !q)}>
+        <button type="button" className="ib2" title="Insert trip details" aria-label="Insert trip details" onClick={() => {
+            setQuick((q) => !q);
+            setBuilder(false);
+          }}>
           🧳
+        </button>
+        <button type="button" className="ib2" title="Build a quote" aria-label="Build a quote" onClick={() => {
+            setBuilder((b) => !b);
+            setQuick(false);
+          }}>
+          🧾
         </button>
         <button type="button" className="ib2" title="Attach a photo or PDF" aria-label="Attach a photo or PDF" disabled={pending} onClick={() => fileRef.current?.click()}>
           📎

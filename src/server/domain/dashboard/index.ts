@@ -104,7 +104,6 @@ export type NeedItem = {
 };
 
 export const WAITING_REPLY_MINUTES = 30;
-export const QUOTE_NO_REPLY_HOURS = 20;
 export const LATE_FLAG_DAYS = 7;
 export const FARE_RISE_BPS = 500; // fare up ≥ 5% in 14 days
 export const FARE_WINDOW_DAYS = 14;
@@ -152,7 +151,7 @@ async function approvalNeeds(role: Role): Promise<NeedItem[]> {
         tone: "lav",
         title: `${who ?? "A customer"} wants a ${a.pax && a.pax >= 2 ? "group " : ""}discount`,
         detail: parts.filter(Boolean).join(" · "),
-        action: { label: "Review", href: role === "OWNER" ? `/approvals/${a.id}` : "/inbox", primary: true },
+        action: { label: "Review", href: role === "OWNER" ? `/approvals/${a.id}` : a.conversationId ? `/inbox?c=${a.conversationId}` : "/inbox", primary: true },
       } satisfies NeedItem;
     }
     return {
@@ -161,7 +160,7 @@ async function approvalNeeds(role: Role): Promise<NeedItem[]> {
       tone: "warn",
       title: who ? `${who}: needs your decision` : "Needs your decision",
       detail: a.summary,
-      action: { label: "Review", href: role === "OWNER" ? `/approvals/${a.id}` : "/inbox", primary: true },
+      action: { label: "Review", href: role === "OWNER" ? `/approvals/${a.id}` : a.conversationId ? `/inbox?c=${a.conversationId}` : "/inbox", primary: true },
     } satisfies NeedItem;
   });
 }
@@ -185,30 +184,30 @@ async function waitingNeeds(now: Date): Promise<NeedItem[]> {
   ];
 }
 
+/** DESK-7: conversations followups.scan marked "Follow-up due" (same source as the inbox pill). */
 async function quoteNeeds(now: Date): Promise<NeedItem[]> {
-  const cutoff = new Date(now.getTime() - QUOTE_NO_REPLY_HOURS * 3_600_000);
-  const quotes = await db.quote.findMany({
-    where: { status: "SENT", createdAt: { lt: cutoff } },
-    include: { customer: { select: { name: true } }, departure: { select: { startDate: true, trip: { select: { name: true } } } } },
-    orderBy: { createdAt: "asc" },
+  const convs = await db.conversation.findMany({
+    where: { status: "FOLLOW_UP", customerId: { not: null }, supplierId: null },
+    orderBy: { lastMessageAt: "asc" },
     take: 20,
+    include: {
+      customer: { select: { name: true } },
+      quotes: { orderBy: { createdAt: "desc" }, take: 1, include: { departure: { select: { startDate: true, trip: { select: { name: true } } } } } },
+    },
   });
-  const out: NeedItem[] = [];
-  for (const q of quotes) {
-    if (q.conversationId) {
-      const replied = await db.message.count({ where: { conversationId: q.conversationId, direction: "INBOUND", createdAt: { gt: q.createdAt } } });
-      if (replied) continue;
-    }
-    out.push({
-      key: `quote:${q.id}`,
+  return convs.map((c) => {
+    const q = c.quotes[0];
+    return {
+      key: `quote:${c.id}`,
       icon: "🔁",
-      tone: "lav",
-      title: `${q.customer.name} hasn't replied to your quote`,
-      detail: `${q.departure.trip.name} ${formatDate(q.departure.startDate)} · ${q.pax} travellers · ${inr(q.totalAmount)} · sent ${ago(q.createdAt, now)} ago`,
-      action: { label: "Follow up", href: q.conversationId ? `/inbox?c=${q.conversationId}` : "/inbox" },
-    });
-  }
-  return out;
+      tone: "lav" as const,
+      title: `${c.customer?.name ?? "A customer"} hasn't replied to your quote`,
+      detail: q
+        ? `${q.departure.trip.name} ${formatDate(q.departure.startDate)} · ${q.pax} travellers · ${inr(q.totalAmount)} · sent ${ago(q.createdAt, now)} ago`
+        : "Follow-up due",
+      action: { label: "Follow up", href: `/inbox?c=${c.id}` },
+    };
+  });
 }
 
 async function rfqNeeds(now: Date): Promise<NeedItem[]> {
