@@ -79,3 +79,14 @@ export function inrLakh(amount: Paise, digits = 1): string {
 export function pct(bps: Bps, digits = 1): string {
   return `${(bps / 100).toFixed(digits)}%`;
 }
+
+/**
+ * Parse a rupee amount typed by a person ("13,999", "2500.5", "₹1,200.75") into paise without
+ * floating point. Returns null for anything else (negative, > 2 decimals, garbage).
+ */
+export function paiseFromRupeeInput(input: string): Paise | null {
+  const s = input.trim().replace(/^₹\s*/, "").replace(/,/g, "");
+  const m = /^(\d{1,9})(?:\.(\d{1,2}))?$/.exec(s);
+  if (!m) return null;
+  return Number(m[1]) * PAISE_PER_RUPEE + Number((m[2] ?? "").padEnd(2, "0"));
+}
