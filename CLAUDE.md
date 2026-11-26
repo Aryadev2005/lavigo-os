@@ -6,7 +6,7 @@ Lavigo OS is an owner and staff operating system for Lavigo Travel Co. (Ranchi).
 
 ## Read first
 
-1. `docs/01-SRS.md`: requirements. IDs like `PRC-2` and `AGT-6` are referenced in commits and tests.
+1. `docs/01-SRS.md`: requirements. IDs like `PRC-2` and `DESK-3` are referenced (`AGT-*` are v2, do not build) in commits and tests.
 2. `docs/03-system-design.md`: architecture, flows, jobs, security, Docker, CI.
 3. `docs/04-database-schema.md` and `prisma/schema.prisma` (copied from `docs/design/schema.prisma`).
 4. `docs/reference/lavigo-os-demo.html`: the visual and behavioural reference. Match its look (tokens in its `:root`, Outfit font, layout) and its copy.
@@ -46,9 +46,8 @@ All of these run inside containers.
   - Calendar dates are `@db.Date` and always mean Asia/Kolkata.
   - Use helpers in `src/server/time.ts`; never `new Date().getDate()` on server data.
 - **Prices come only from `src/server/domain/pricing`:**
-  - The LLM never computes or decides a price.
-  - Agent tools re-run the pricing engine and reject disallowed prices.
-  - Tool results sent to the model never include cost, floor or margin.
+  - Every server action that writes a price (quotes, bookings, approvals) re-runs `evaluatePrice` + `canQuote` on the server. A client-sent price is only an input, never trusted.
+  - Floor, cost and margin never reach a STAFF session (RSC props or action responses); use `forRole()`.
 - **Authorization:**
   - Every server action and query enforces auth and role via `requireUser(role?)` in the data layer.
   - Middleware is a convenience, not the guard.
@@ -60,13 +59,13 @@ All of these run inside containers.
   - Seat holds and payment application run in one transaction.
   - Seat holds lock the departure row with `FOR UPDATE`.
 - **External services:**
-  - All of them (Meta, Razorpay, Anthropic, SMTP, S3) sit behind an adapter in `src/server/<area>/`.
+  - All of them (Meta, Razorpay, SMTP, S3) sit behind an adapter in `src/server/<area>/`.
   - Each adapter has a fake for dev and tests.
   - With empty keys in dev, fall back to the fake. In prod, refuse to boot.
-- **Slow work** (LLM calls, provider sends, PDFs) happens in the **worker**, never inside a request.
+- **Slow work** (provider sends, payment-link creation, PDFs) happens in the **worker**, never inside a request.
 - **Secrets** live in env only, validated by `src/server/env.ts`. Never log tokens, OTPs or full payloads with PII.
 - **Schema changes** are additive migrations only. Never edit an applied migration. If you are one of several parallel sessions, don't change existing models without saying so in your summary.
-- **Tests:** write only the ones that protect money, seats, security or the guardrail (see `docs/03-system-design.md` §13). Don't write snapshot tests or trivial UI tests.
+- **Tests:** write only the ones that protect money, seats, security or pricing rules (see `docs/03-system-design.md` §13). Don't write snapshot tests or trivial UI tests.
 
 ## AI / LLM: v2 only (do not build in v1)
 
