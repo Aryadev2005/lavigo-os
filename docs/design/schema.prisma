@@ -1,0 +1,1081 @@
+// Lavigo OS — reference database schema (PostgreSQL 16, Prisma ORM)
+//
+// Copy to prisma/schema.prisma in Phase 0. Conventions (see docs/04-database-schema.md):
+//   * All money is Int in PAISE (₹1 = 100). Never Float/Decimal for money.
+//   * Percentages are Int in BASIS POINTS (17% = 1700).
+//   * Calendar dates (departures, due dates) are @db.Date and interpreted in Asia/Kolkata.
+//   * Timestamps are timestamptz (Prisma DateTime default).
+//   * "*ById String?" columns without a relation are informational (who did it); the
+//     relations that matter for integrity are declared explicitly.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ───────────────────────────── Identity ─────────────────────────────
+
+enum Role {
+  OWNER
+  STAFF
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         Role     @default(STAFF)
+  phone        String? // owner's personal WhatsApp, for approval alerts
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  approvalsDecided   Approval[]     @relation("ApprovalDecider")
+  conversationsTaken Conversation[] @relation("TakenOverBy")
+  messagesAuthored   Message[]      @relation("MessageAuthorUser")
+  paymentsRecorded   Payment[]      @relation("PaymentRecorder")
+  auditLogs          AuditLog[]
+}
+
+// ───────────────────────────── Customers ─────────────────────────────
+
+model Customer {
+  id               String    @id @default(cuid())
+  name             String
+  phone            String?   @unique // E.164, e.g. +919835011223
+  email            String?
+  igUserId         String?   @unique // Instagram-scoped user id (IGSID)
+  igUsername       String?
+  city             String?
+  tags             String[] // e.g. ["hills","family"] — used by campaign audiences
+  marketingOptIn   Boolean   @default(false) // required before marketing templates
+  marketingOptInAt DateTime?
+  optInSource      String?
+  notes            String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  conversations      Conversation[]
+  bookings           Booking[]
+  quotes             Quote[]
+  waitlist           WaitlistEntry[]
+  campaignRecipients CampaignRecipient[]
+
+  @@index([name])
+}
+
+// ───────────────────────────── Catalog ─────────────────────────────
+
+model Trip {
+  id           String   @id @default(cuid())
+  slug         String   @unique
+  name         String // "Nepal"
+  title        String // "Nepal · Pokhara & Kathmandu"
+  destination  String
+  nights       Int
+  days         Int
+  summary      String
+  inclusions   String[]
+  exclusions   String[]
+  itinerary    Json // [{ day: 1, title: "...", description: "..." }]
+  heroImageKey String?
+  active       Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  departures Departure[]
+  addOns     AddOn[]
+}
+
+enum DepartureStatus {
+  DRAFT
+  OPEN
+  CLOSED
+  COMPLETED
+  CANCELLED
+}
+
+model Departure {
+  id                 String          @id @default(cuid())
+  code               String          @unique // "NP-28N"
+  tripId             String
+  trip               Trip            @relation(fields: [tripId], references: [id])
+  startDate          DateTime        @db.Date
+  endDate            DateTime        @db.Date
+  seatsTotal         Int
+  pricePerPax        Int // paise, list price incl. GST
+  costPerPax         Int // paise, planned cost (hotels, travel, leader)
+  travelBudgetPerPax Int             @default(0) // paise share of cost reserved for tickets
+  usualRoomRate      Int? // paise per room-night; RFQ savings baseline
+  status             DepartureStatus @default(OPEN)
+  createdAt          DateTime        @default(now())
+  updatedAt          DateTime        @updatedAt
+
+  bookings      Booking[]
+  quotes        Quote[]
+  approvals     Approval[]
+  offers        Offer[]
+  expenses      Expense[]
+  rfqs          Rfq[]
+  travelPlans   TravelPlan[]
+  campaigns     Campaign[]
+  waitlist      WaitlistEntry[]
+  conversations Conversation[]
+  documents     Document[]
+
+  @@index([startDate])
+}
+
+model AddOn {
+  id          String  @id @default(cuid())
+  tripId      String
+  trip        Trip    @relation(fields: [tripId], references: [id])
+  name        String // "Phewa lake boating"
+  description String
+  costPerPax  Int // paise, what it costs Lavigo
+  active      Boolean @default(true)
+}
+
+// ───────────────────────────── AI rules & offers ─────────────────────────────
+
+// Singleton row (id = 1). Edited on the "AI rules" screen.
+model AgentSettings {
+  id                         Int      @id @default(1)
+  floorMarginBps             Int      @default(1700) // AI never sells below this margin
+  soloDiscountPerPax         Int      @default(0) // paise AI may give without asking
+  freebieFirst               Boolean  @default(true)
+  reply24x7                  Boolean  @default(true)
+  businessHoursStart         String   @default("09:00") // IST, used when reply24x7 = false
+  businessHoursEnd           String   @default("21:00")
+  escalateGroupSizeAtLeast   Int      @default(15)
+  escalateComplaints         Boolean  @default(true)
+  escalateRefunds            Boolean  @default(true)
+  advancePctBps              Int      @default(2500) // 25% advance locks seats
+  balanceDueDaysBeforeTravel Int      @default(15)
+  quoteValidityHours         Int      @default(24)
+  charmEnding                Int      @default(99) // suggested counters end in ..99
+  gstRateBps                 Int      @default(500) // CONFIRM WITH CA — see SRS open questions
+  gstin                      String?
+  assistantName              String   @default("Lavigo Assistant")
+  updatedAt                  DateTime @updatedAt
+  updatedById                String?
+}
+
+enum OfferKind {
+  GROUP
+  EARLY_BIRD
+  REPEAT_TRAVELLER
+  CUSTOM
+}
+
+model Offer {
+  id                  String     @id @default(cuid())
+  kind                OfferKind
+  name                String // "Group offer"
+  description         String // "₹500 off per person for 6 or more"
+  amountPerPax        Int // paise
+  minPax              Int?
+  minDaysBeforeTravel Int?
+  enabled             Boolean    @default(true)
+  departureId         String? // null = applies to all departures
+  departure           Departure? @relation(fields: [departureId], references: [id])
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+}
+
+// ───────────────────────────── Conversations ─────────────────────────────
+
+enum Channel {
+  WHATSAPP
+  INSTAGRAM
+  SANDBOX // in-app simulator; used for demos and tests
+  EMAIL
+}
+
+enum ConversationStatus {
+  NEW
+  ACTIVE
+  NEGOTIATING
+  AWAITING_OWNER
+  QUOTED
+  PAYMENT_PENDING
+  PAID
+  FOLLOW_UP
+  CLOSED
+}
+
+enum AiMode {
+  AUTO
+  PAUSED // owner took over
+}
+
+enum LeadTemp {
+  NEW
+  COLD
+  WARM
+  HOT
+}
+
+model Conversation {
+  id                    String             @id @default(cuid())
+  channel               Channel
+  externalThreadId      String // WA: E.164 phone · IG: IGSID · SANDBOX: uuid
+  customerId            String?
+  customer              Customer?          @relation(fields: [customerId], references: [id])
+  supplierId            String? // set when the other party is a supplier (RFQ replies)
+  supplier              Supplier?          @relation(fields: [supplierId], references: [id])
+  status                ConversationStatus @default(NEW)
+  aiMode                AiMode             @default(AUTO)
+  takenOverById         String?
+  takenOverBy           User?              @relation("TakenOverBy", fields: [takenOverById], references: [id])
+  takenOverAt           DateTime?
+  leadTemp              LeadTemp           @default(NEW)
+  paxCount              Int?
+  interestedDepartureId String?
+  interestedDeparture   Departure?         @relation(fields: [interestedDepartureId], references: [id])
+  sourceNote            String? // "Instagram reel → WhatsApp"
+  referral              Json? // raw WA click-to-chat referral object
+  summary               String? // rolling summary maintained by the agent
+  lastInboundAt         DateTime? // drives the 24h customer-service window
+  lastMessageAt         DateTime           @default(now())
+  unreadCount           Int                @default(0)
+  createdAt             DateTime           @default(now())
+  updatedAt             DateTime           @updatedAt
+
+  messages  Message[]
+  approvals Approval[]
+  quotes    Quote[]
+  agentRuns AgentRun[]
+  bookings  Booking[]
+
+  @@unique([channel, externalThreadId])
+  @@index([status])
+  @@index([lastMessageAt])
+}
+
+enum Direction {
+  INBOUND
+  OUTBOUND
+}
+
+enum Author {
+  CUSTOMER
+  SUPPLIER
+  AI
+  OWNER // any logged-in user (owner or staff)
+  SYSTEM
+}
+
+enum MessageKind {
+  TEXT
+  QUOTE // quote card; payload holds the line items
+  PAYMENT_LINK
+  TEMPLATE
+  MEDIA
+  SYSTEM_NOTE // shown centred in the thread, never sent to the customer
+}
+
+enum DeliveryStatus {
+  RECEIVED
+  QUEUED
+  SENT
+  DELIVERED
+  READ
+  FAILED
+  BLOCKED // stopped by outbound policy or closed 24h window
+}
+
+model Message {
+  id             String         @id @default(cuid())
+  conversationId String
+  conversation   Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  direction      Direction
+  author         Author
+  authorUserId   String?
+  authorUser     User?          @relation("MessageAuthorUser", fields: [authorUserId], references: [id])
+  kind           MessageKind    @default(TEXT)
+  body           String
+  payload        Json?
+  mediaKey       String?
+  externalId     String?        @unique // provider message id — dedupes webhooks
+  status         DeliveryStatus @default(QUEUED)
+  error          String?
+  agentRunId     String?
+  agentRun       AgentRun?      @relation(fields: [agentRunId], references: [id])
+  createdAt      DateTime       @default(now())
+
+  @@index([conversationId, createdAt])
+}
+
+// ───────────────────────────── AI agent audit ─────────────────────────────
+
+enum AgentRunStatus {
+  RUNNING
+  SUCCEEDED
+  FAILED
+  SKIPPED
+}
+
+model AgentRun {
+  id              String         @id @default(cuid())
+  conversationId  String
+  conversation    Conversation   @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  trigger         String // inbound | approval_decided | follow_up | payment_received
+  model           String
+  status          AgentRunStatus @default(RUNNING)
+  stopReason      String?
+  inputTokens     Int            @default(0)
+  outputTokens    Int            @default(0)
+  cacheReadTokens Int            @default(0)
+  latencyMs       Int?
+  error           String?
+  startedAt       DateTime       @default(now())
+  finishedAt      DateTime?
+
+  steps    AgentStep[]
+  messages Message[]
+
+  @@index([conversationId, startedAt])
+}
+
+model AgentStep {
+  id        String   @id @default(cuid())
+  runId     String
+  run       AgentRun @relation(fields: [runId], references: [id], onDelete: Cascade)
+  idx       Int
+  tool      String
+  label     String // human text for "What the AI did", e.g. "Applied your 6+ group offer"
+  input     Json
+  output    Json
+  isError   Boolean  @default(false)
+  createdAt DateTime @default(now())
+}
+
+// ───────────────────────────── Approvals & quotes ─────────────────────────────
+
+enum ApprovalKind {
+  PRICE // inside floor, outside AI autonomy
+  BELOW_FLOOR // customer asked below floor; AI proposes a counter
+  LARGE_GROUP
+  COMPLAINT
+  REFUND
+  CUSTOM_TRIP
+  OTHER
+}
+
+enum ApprovalStatus {
+  PENDING
+  APPROVED
+  COUNTERED
+  DECLINED
+  EXPIRED
+}
+
+model Approval {
+  id                   String         @id @default(cuid())
+  kind                 ApprovalKind
+  status               ApprovalStatus @default(PENDING)
+  conversationId       String?
+  conversation         Conversation?  @relation(fields: [conversationId], references: [id])
+  departureId          String?
+  departure            Departure?     @relation(fields: [departureId], references: [id])
+  pax                  Int?
+  requestedPricePerPax Int? // paise — what the customer asked
+  suggestedPricePerPax Int? // paise — server-computed, never from the LLM
+  decidedPricePerPax   Int? // paise — what the owner approved / countered
+  summary              String
+  decidedById          String?
+  decidedBy            User?          @relation("ApprovalDecider", fields: [decidedById], references: [id])
+  decidedAt            DateTime?
+  expiresAt            DateTime?
+  createdAt            DateTime       @default(now())
+
+  quotes Quote[]
+
+  @@index([status])
+}
+
+enum QuoteStatus {
+  SENT
+  ACCEPTED
+  EXPIRED
+  SUPERSEDED
+}
+
+model Quote {
+  id              String        @id @default(cuid())
+  conversationId  String?
+  conversation    Conversation? @relation(fields: [conversationId], references: [id])
+  customerId      String
+  customer        Customer      @relation(fields: [customerId], references: [id])
+  departureId     String
+  departure       Departure     @relation(fields: [departureId], references: [id])
+  pax             Int
+  listPricePerPax Int // paise
+  pricePerPax     Int // paise, final per-person price offered
+  discounts       Json // [{ label: "Group offer (6+)", amountPerPax: 50000 }]
+  totalAmount     Int // paise
+  validUntil      DateTime
+  status          QuoteStatus   @default(SENT)
+  approvalId      String?
+  approval        Approval?     @relation(fields: [approvalId], references: [id])
+  createdBy       Author // AI or OWNER
+  createdAt       DateTime      @default(now())
+
+  booking Booking?
+}
+
+// ───────────────────────────── Bookings ─────────────────────────────
+
+enum BookingKind {
+  FIXED // seat on a Departure
+  CUSTOM // tailor-made trip (no Departure)
+}
+
+enum BookingStatus {
+  HELD // seats held, waiting for advance (holdExpiresAt)
+  CONFIRMED
+  CANCELLED
+  COMPLETED
+}
+
+enum BookingSource {
+  WEBSITE
+  WHATSAPP
+  INSTAGRAM
+  WALK_IN
+  PHONE
+  AI_WHATSAPP
+  AI_INSTAGRAM
+}
+
+model Booking {
+  id               String        @id @default(cuid())
+  code             String        @unique // "LVG-24901" from a Postgres sequence
+  kind             BookingKind   @default(FIXED)
+  status           BookingStatus @default(HELD)
+  source           BookingSource
+  customerId       String
+  customer         Customer      @relation(fields: [customerId], references: [id])
+  departureId      String?
+  departure        Departure?    @relation(fields: [departureId], references: [id])
+  quoteId          String?       @unique
+  quote            Quote?        @relation(fields: [quoteId], references: [id])
+  conversationId   String?
+  conversation     Conversation? @relation(fields: [conversationId], references: [id])
+  customTitle      String? // CUSTOM only: "Goa family (Saurav K.)"
+  customStartDate  DateTime?     @db.Date
+  pax              Int
+  pricePerPax      Int // paise
+  totalAmount      Int // paise
+  paidAmount       Int           @default(0) // paise; denormalised, updated in the payment txn
+  costTotalPlanned Int // paise snapshot at booking time (costPerPax × pax, or custom estimate)
+  balanceDueDate   DateTime?     @db.Date
+  holdExpiresAt    DateTime?
+  cancelledAt      DateTime?
+  cancelReason     String?
+  notes            String?
+  createdById      String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  travellers   Traveller[]
+  payments     Payment[]
+  paymentLinks PaymentLink[]
+  invoices     Invoice[]
+  documents    Document[]
+  reminderLogs ReminderLog[]
+  expenses     Expense[]
+  travelPlans  TravelPlan[]
+  campaignWins CampaignRecipient[]
+
+  @@index([status])
+  @@index([balanceDueDate])
+  @@index([departureId])
+}
+
+enum DocStatus {
+  PENDING
+  RECEIVED
+  VERIFIED
+  REJECTED
+}
+
+model Traveller {
+  id         String    @id @default(cuid())
+  bookingId  String
+  booking    Booking   @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  fullName   String
+  age        Int?
+  gender     String? // M | F | O — needed for IRCTC passenger lists
+  phone      String?
+  isLead     Boolean   @default(false)
+  berthPref  String?
+  idType     String? // passport | voter_id | aadhaar | ...
+  docStatus  DocStatus @default(PENDING)
+  documentId String?   @unique
+  document   Document? @relation("TravellerIdDocument", fields: [documentId], references: [id])
+  createdAt  DateTime  @default(now())
+}
+
+enum DocumentKind {
+  INVOICE
+  RECEIPT
+  ITINERARY
+  VOUCHER
+  TICKET
+  TRAVELLER_ID
+  OTHER
+}
+
+model Document {
+  id          String       @id @default(cuid())
+  kind        DocumentKind
+  bookingId   String?
+  booking     Booking?     @relation(fields: [bookingId], references: [id])
+  departureId String?
+  departure   Departure?   @relation(fields: [departureId], references: [id])
+  storageKey  String       @unique // S3/MinIO object key (private bucket)
+  fileName    String
+  mimeType    String
+  sizeBytes   Int
+  sentAt      DateTime?
+  createdAt   DateTime     @default(now())
+
+  traveller   Traveller?   @relation("TravellerIdDocument")
+  invoice     Invoice?
+  ticketGroup TicketGroup?
+}
+
+// ───────────────────────────── Payments ─────────────────────────────
+
+enum PaymentMethod {
+  UPI
+  CARD
+  NETBANKING
+  CASH
+  BANK_TRANSFER
+  OTHER
+}
+
+enum PaymentStatus {
+  PENDING
+  CAPTURED
+  FAILED
+  REFUNDED
+}
+
+enum PaymentProvider {
+  RAZORPAY
+  MANUAL
+}
+
+model Payment {
+  id                String          @id @default(cuid())
+  bookingId         String
+  booking           Booking         @relation(fields: [bookingId], references: [id])
+  amount            Int // paise
+  method            PaymentMethod
+  status            PaymentStatus   @default(CAPTURED)
+  provider          PaymentProvider
+  providerPaymentId String?         @unique // Razorpay pay_xxx — idempotency key
+  paymentLinkId     String?
+  paymentLink       PaymentLink?    @relation(fields: [paymentLinkId], references: [id])
+  receivedAt        DateTime        @default(now())
+  recordedById      String?
+  recordedBy        User?           @relation("PaymentRecorder", fields: [recordedById], references: [id])
+  note              String?
+  createdAt         DateTime        @default(now())
+
+  @@index([receivedAt])
+}
+
+enum PaymentPurpose {
+  ADVANCE
+  BALANCE
+  FULL
+}
+
+enum PaymentLinkStatus {
+  CREATED
+  PAID
+  EXPIRED
+  CANCELLED
+}
+
+model PaymentLink {
+  id             String            @id @default(cuid())
+  bookingId      String
+  booking        Booking           @relation(fields: [bookingId], references: [id])
+  purpose        PaymentPurpose
+  amount         Int // paise
+  providerLinkId String            @unique // Razorpay plink_xxx
+  shortUrl       String
+  status         PaymentLinkStatus @default(CREATED)
+  expiresAt      DateTime?
+  createdAt      DateTime          @default(now())
+
+  payments Payment[]
+}
+
+model Invoice {
+  id         String    @id @default(cuid())
+  number     String    @unique // default "INV-{bookingNo}"; format pending CA confirmation
+  bookingId  String
+  booking    Booking   @relation(fields: [bookingId], references: [id])
+  amount     Int // paise, incl. tax
+  taxBreakup Json // { taxableValue, gstRateBps, cgst, sgst, igst }
+  documentId String?   @unique
+  document   Document? @relation(fields: [documentId], references: [id])
+  issuedAt   DateTime  @default(now())
+}
+
+// ───────────────────────────── Dues & reminders ─────────────────────────────
+
+enum ReminderAnchor {
+  DUE_DATE
+  TRAVEL_DATE
+}
+
+enum ReminderAction {
+  SEND_REMINDER
+  FLAG_OWNER
+  RELEASE_SEATS
+}
+
+model ReminderRule {
+  id           String         @id @default(cuid())
+  key          String         @unique // before_7d | on_due | late_3d | late_7d | seat_release
+  name         String
+  description  String
+  anchor       ReminderAnchor
+  offsetDays   Int // -7 = 7 days before anchor, 3 = 3 days after
+  action       ReminderAction
+  templateName String? // WhatsApp template used outside the 24h window
+  enabled      Boolean        @default(true)
+
+  logs ReminderLog[]
+}
+
+enum ReminderLogStatus {
+  SENT
+  SKIPPED
+  FAILED
+}
+
+model ReminderLog {
+  id           String            @id @default(cuid())
+  bookingId    String
+  booking      Booking           @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  ruleId       String
+  rule         ReminderRule      @relation(fields: [ruleId], references: [id])
+  scheduledFor DateTime          @db.Date
+  status       ReminderLogStatus
+  messageId    String?
+  detail       String?
+  createdAt    DateTime          @default(now())
+
+  @@unique([bookingId, ruleId, scheduledFor]) // daily scanner is idempotent
+}
+
+// ───────────────────────────── Suppliers & RFQs ─────────────────────────────
+
+enum SupplierType {
+  HOTEL
+  AGENT
+  DMC
+  TRANSPORT
+  OTHER
+}
+
+enum ContactChannel {
+  WHATSAPP
+  EMAIL
+}
+
+model Supplier {
+  id               String         @id @default(cuid())
+  name             String
+  type             SupplierType
+  destinations     String[] // ["Gangtok, Sikkim"]
+  contactName      String?
+  phone            String?        @unique // E.164 — inbound WA from this number routes to RFQ parser
+  email            String?
+  preferredChannel ContactChannel @default(WHATSAPP)
+  active           Boolean        @default(true)
+  notes            String?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  rfqRecipients RfqRecipient[]
+  conversations Conversation[]
+  expenses      Expense[]
+}
+
+enum RoomCategory {
+  BUDGET
+  COMFORT
+  PREMIUM
+}
+
+enum MealPlan {
+  EP // room only
+  CP // breakfast
+  MAP // breakfast + dinner
+  AP // all meals
+}
+
+enum RfqStatus {
+  DRAFT
+  SENT
+  CLOSED
+  BOOKED
+}
+
+model Rfq {
+  id                       String       @id @default(cuid())
+  destination              String
+  departureId              String?
+  departure                Departure?   @relation(fields: [departureId], references: [id])
+  checkIn                  DateTime     @db.Date
+  nights                   Int
+  rooms                    Int
+  category                 RoomCategory
+  mealPlan                 MealPlan
+  baselineRatePerRoomNight Int? // paise; "your usual rate"
+  status                   RfqStatus    @default(DRAFT)
+  notes                    String?
+  createdById              String?
+  sentAt                   DateTime?
+  createdAt                DateTime     @default(now())
+
+  recipients RfqRecipient[]
+}
+
+enum RfqRecipientStatus {
+  QUEUED
+  SENT
+  REPLIED
+  NUDGED
+  NO_REPLY
+  DECLINED
+  FAILED
+}
+
+model RfqRecipient {
+  id                String             @id @default(cuid())
+  rfqId             String
+  rfq               Rfq                @relation(fields: [rfqId], references: [id], onDelete: Cascade)
+  supplierId        String
+  supplier          Supplier           @relation(fields: [supplierId], references: [id])
+  channel           ContactChannel
+  status            RfqRecipientStatus @default(QUEUED)
+  sentAt            DateTime?
+  nudgedAt          DateTime?
+  repliedAt         DateTime?
+  outboundMessageId String?
+
+  quotes SupplierQuote[]
+
+  @@unique([rfqId, supplierId])
+}
+
+enum QuoteSource {
+  AI_PARSED
+  MANUAL
+}
+
+enum SupplierQuoteStatus {
+  RECEIVED
+  BOOKED
+  REJECTED
+}
+
+model SupplierQuote {
+  id               String              @id @default(cuid())
+  recipientId      String
+  recipient        RfqRecipient        @relation(fields: [recipientId], references: [id], onDelete: Cascade)
+  ratePerRoomNight Int // paise
+  totalAmount      Int // paise = rate × rooms × nights unless supplier states otherwise
+  inclusions       String?
+  rawText          String
+  source           QuoteSource
+  confidenceBps    Int? // parser confidence; < 8000 shows "check this" badge
+  status           SupplierQuoteStatus @default(RECEIVED)
+  bookedAt         DateTime?
+  createdAt        DateTime            @default(now())
+
+  expenses Expense[]
+}
+
+// ───────────────────────────── Costs (profit) ─────────────────────────────
+
+enum ExpenseCategory {
+  HOTEL
+  TRANSPORT
+  TICKETS
+  TRIP_LEADER
+  FOOD
+  ACTIVITIES
+  OTHER
+}
+
+model Expense {
+  id              String          @id @default(cuid())
+  departureId     String?
+  departure       Departure?      @relation(fields: [departureId], references: [id])
+  bookingId       String? // custom trips, or booking-specific costs
+  booking         Booking?        @relation(fields: [bookingId], references: [id])
+  supplierId      String?
+  supplier        Supplier?       @relation(fields: [supplierId], references: [id])
+  supplierQuoteId String?
+  supplierQuote   SupplierQuote?  @relation(fields: [supplierQuoteId], references: [id])
+  category        ExpenseCategory
+  amount          Int // paise
+  description     String
+  incurredOn      DateTime        @db.Date
+  createdById     String?
+  createdAt       DateTime        @default(now())
+}
+
+// ───────────────────────────── Tickets desk ─────────────────────────────
+
+enum TravelMode {
+  FLIGHT
+  TRAIN
+  BUS
+  OTHER
+}
+
+enum TravelPlanStatus {
+  PLANNING
+  WINDOW_PENDING // train booking window not open yet
+  BOOKED
+}
+
+model TravelPlan {
+  id             String           @id @default(cuid())
+  label          String // "Goa family · custom"
+  departureId    String?
+  departure      Departure?       @relation(fields: [departureId], references: [id])
+  bookingId      String? // custom trips
+  booking        Booking?         @relation(fields: [bookingId], references: [id])
+  origin         String
+  destination    String
+  travelDate     DateTime         @db.Date
+  budgetPerPax   Int // paise
+  note           String?
+  status         TravelPlanStatus @default(PLANNING)
+  windowOpensAt  DateTime? // trains: travelDate − ARP days at 08:00 IST
+  bookedOptionId String?
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
+
+  options TravelOption[]
+  tickets TicketGroup[]
+}
+
+enum FareSource {
+  MANUAL
+  PORTAL
+}
+
+model TravelOption {
+  id                 String     @id @default(cuid())
+  planId             String
+  plan               TravelPlan @relation(fields: [planId], references: [id], onDelete: Cascade)
+  mode               TravelMode
+  title              String // "IndiGo · Ranchi → Mumbai → Goa (GOI)"
+  details            String // "07:05 → 13:40 · 1 stop · 6h 35m"
+  ticketPerPax       Int // paise, current fare
+  extrasPerPax       Int        @default(0) // paise, hidden costs (cab, extra night, meals)
+  extrasNote         String?
+  tags               String[] // display only
+  disqualified       Boolean    @default(false) // excluded from "best" (too long, over budget…)
+  disqualifiedReason String?
+  source             FareSource @default(MANUAL)
+  createdAt          DateTime   @default(now())
+  updatedAt          DateTime   @updatedAt
+
+  fareSnapshots FareSnapshot[]
+}
+
+model FareSnapshot {
+  id         String       @id @default(cuid())
+  optionId   String
+  option     TravelOption @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  farePerPax Int // paise
+  source     FareSource   @default(MANUAL)
+  capturedAt DateTime     @default(now())
+
+  @@index([optionId, capturedAt])
+}
+
+enum TicketStatus {
+  PLANNED
+  BOOKED
+}
+
+model TicketGroup {
+  id         String       @id @default(cuid())
+  planId     String
+  plan       TravelPlan   @relation(fields: [planId], references: [id], onDelete: Cascade)
+  idx        Int
+  label      String // "Riya Sinha's family"
+  passengers Json // snapshot: [{ travellerId, fullName, age, gender, berthPref }]  (≤ 6 for IRCTC)
+  pnr        String?
+  status     TicketStatus @default(PLANNED)
+  bookedAt   DateTime?
+  documentId String?      @unique
+  document   Document?    @relation(fields: [documentId], references: [id])
+}
+
+// ───────────────────────────── Campaigns (fill seats) ─────────────────────────────
+
+enum CampaignStatus {
+  DRAFT
+  SENDING
+  SENT
+  CANCELLED
+}
+
+model Campaign {
+  id             String         @id @default(cuid())
+  departureId    String
+  departure      Departure      @relation(fields: [departureId], references: [id])
+  name           String
+  templateName   String // approved WhatsApp MARKETING template
+  discountPerPax Int? // paise
+  validUntil     DateTime?
+  audienceSpec   Json // { pastTravellers: true, unconvertedEnquiries: true, waitlist: true, tags: [...] }
+  status         CampaignStatus @default(DRAFT)
+  createdById    String?
+  sentAt         DateTime?
+  createdAt      DateTime       @default(now())
+
+  recipients CampaignRecipient[]
+}
+
+enum AudienceReason {
+  PAST_TRAVELLER
+  UNCONVERTED_ENQUIRY
+  WAITLIST
+}
+
+enum CampaignRecipientStatus {
+  QUEUED
+  SENT
+  FAILED
+  SKIPPED_NO_OPTIN
+}
+
+model CampaignRecipient {
+  id                 String                  @id @default(cuid())
+  campaignId         String
+  campaign           Campaign                @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  customerId         String
+  customer           Customer                @relation(fields: [customerId], references: [id])
+  reason             AudienceReason
+  status             CampaignRecipientStatus @default(QUEUED)
+  messageId          String?
+  convertedBookingId String? // set when this customer books the departure within the attribution window
+  convertedBooking   Booking?                @relation(fields: [convertedBookingId], references: [id])
+
+  @@unique([campaignId, customerId])
+}
+
+model WaitlistEntry {
+  id          String    @id @default(cuid())
+  customerId  String
+  customer    Customer  @relation(fields: [customerId], references: [id])
+  departureId String
+  departure   Departure @relation(fields: [departureId], references: [id])
+  pax         Int       @default(1)
+  createdAt   DateTime  @default(now())
+
+  @@unique([customerId, departureId])
+}
+
+// ───────────────────────────── Messaging templates ─────────────────────────────
+
+enum TemplateCategory {
+  UTILITY
+  MARKETING
+  AUTHENTICATION
+}
+
+model MessageTemplate {
+  id          String           @id @default(cuid())
+  name        String           @unique // exact name registered with Meta
+  language    String           @default("en")
+  category    TemplateCategory
+  purpose     String // PAYMENT_REMINDER | RFQ | CAMPAIGN | FOLLOW_UP | DOC_CHECKLIST | BOOKING_CONFIRMED | OWNER_APPROVAL
+  bodyPreview String // body with {{1}} placeholders, for previews in the UI
+  variables   String[] // ordered variable names mapped to {{1}}, {{2}}…
+  metaStatus  String           @default("PENDING") // APPROVED | PENDING | REJECTED
+  updatedAt   DateTime         @updatedAt
+}
+
+// ───────────────────────────── Infra / audit ─────────────────────────────
+
+enum WebhookProvider {
+  WHATSAPP
+  INSTAGRAM
+  RAZORPAY
+  EMAIL
+}
+
+model WebhookEvent {
+  id          String          @id @default(cuid())
+  provider    WebhookProvider
+  externalId  String // provider event / message id
+  payload     Json
+  receivedAt  DateTime        @default(now())
+  processedAt DateTime?
+  attempts    Int             @default(0)
+  error       String?
+
+  @@unique([provider, externalId]) // replay + duplicate protection
+}
+
+enum ActorType {
+  AI
+  USER
+  SYSTEM
+  CUSTOMER
+  SUPPLIER
+}
+
+// Powers the "Live activity" feed on Today and the AI-handled counters.
+model ActivityEvent {
+  id         String    @id @default(cuid())
+  type       String // payment.received | ai.replied | supplier.replied | reminder.sent | …
+  icon       String // emoji shown in the feed
+  text       String
+  actorType  ActorType
+  entityType String?
+  entityId   String?
+  createdAt  DateTime  @default(now())
+
+  @@index([createdAt])
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String?
+  user       User?    @relation(fields: [userId], references: [id])
+  action     String // approval.approve | rules.update | booking.cancel | payment.manual …
+  entityType String
+  entityId   String
+  before     Json?
+  after      Json?
+  ip         String?
+  createdAt  DateTime @default(now())
+
+  @@index([entityType, entityId])
+}
