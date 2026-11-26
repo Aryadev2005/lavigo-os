@@ -8,7 +8,7 @@ import { AddTravellerForm, BookingActions, CancelBooking, CopyLink, RecordPaymen
 const METHOD: Record<string, string> = { UPI: "UPI", CARD: "Card", NETBANKING: "Net banking", CASH: "Cash", BANK_TRANSFER: "Bank transfer", OTHER: "Other" };
 const DOC: Record<string, string> = { PENDING: "ID pending", RECEIVED: "ID received", VERIFIED: "ID verified", REJECTED: "ID rejected" };
 
-export function BookingDrawerContent({ detail: d, role, closeHref }: { detail: BookingDetail; role: Role; closeHref: string }) {
+export function BookingDrawerContent({ detail: d, role, closeHref, hotelsBooked }: { detail: BookingDetail; role: Role; closeHref: string; hotelsBooked?: boolean }) {
   const cancelled = d.status === "CANCELLED";
   return (
     <>
@@ -77,6 +77,7 @@ export function BookingDrawerContent({ detail: d, role, closeHref }: { detail: B
         invoiceDocumentId={d.invoiceDocumentId}
         itineraryDocumentId={d.itineraryDocumentId}
         hasDeparture={!!d.departureId}
+        hotelsBooked={hotelsBooked}
       />
 
       {d.links.length ? (
