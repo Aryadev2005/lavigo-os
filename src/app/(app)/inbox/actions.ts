@@ -1,6 +1,6 @@
 "use server";
 /**
- * Inbox mutations (INB-7, INB-8, INB-11). requireUser → zod → domain → revalidate.
+ * Inbox mutations (INB-7, INB-8, INB-11) and the deal desk (DESK-*). requireUser → zod → domain → revalidate.
  * Every outbound message records its author (Message.authorUserId), which is the send audit trail;
  * lead edits write an AuditLog entry.
  */
@@ -14,6 +14,18 @@ import { ALLOWED_MEDIA, MAX_MEDIA_BYTES, sniffMime } from "@/server/channels/med
 import { db } from "@/server/db";
 import { markRead, updateLead } from "@/server/domain/conversations";
 import { departureSnippet } from "@/server/domain/conversations/queries";
+import {
+  askOwner,
+  DealError,
+  decideApproval,
+  previewQuote,
+  sendFollowUp,
+  sendPaymentLink,
+  sendQuote,
+  type DealActor,
+  type DealErrorCode,
+  type QuotePreview,
+} from "@/server/domain/deals";
 import { logger } from "@/server/logger";
 import { requireUser } from "@/server/rbac";
 import { getStorage } from "@/server/storage/s3";
@@ -112,4 +124,97 @@ export async function updateLeadAction(conversationId: string, patch: z.input<ty
   await updateLead(conversationId, parsed.data, { id: user.id, role: user.role }, clientIp(await headers()));
   revalidatePath("/inbox");
   return { ok: true as const };
+}
+
+// ───────────────────────────── deal desk (DESK-1 … DESK-7) ─────────────────────────────
+// Thin wrappers: requireUser + zod, then deals.*. Prices are integer paise and are only ever the
+// REQUESTED input: the domain re-derives every price and checks it for the caller's role.
+
+const paise = z.number().int().positive().max(100_000_000);
+const code = z.string().trim().min(1).max(40);
+const pax = z.number().int().min(1).max(200);
+
+export type DealActionResult<T = undefined> = { ok: true; data: T } | { ok: false; error: string; code?: DealErrorCode; reason?: string };
+
+async function deal<T>(fn: (actor: DealActor, ip: string) => Promise<T>, revalidate = true): Promise<DealActionResult<T>> {
+  const user = await requireUser();
+  try {
+    const data = await fn({ id: user.id, role: user.role }, clientIp(await headers()));
+    if (revalidate) revalidatePath("/inbox");
+    return { ok: true, data };
+  } catch (err) {
+    if (err instanceof DealError) return { ok: false, error: err.message, code: err.code, reason: err.reason };
+    throw err;
+  }
+}
+
+function invalid(e: z.ZodError): DealActionResult<never> {
+  return { ok: false, error: e.issues[0]?.message ?? "Check the details", code: "INVALID" };
+}
+
+const previewInput = z.object({ conversationId: id, code, pax, requestedPricePerPax: paise.nullable().optional() });
+
+/** Live quote-builder preview. The response is role-filtered (no floor/cost/margin for STAFF). */
+export async function previewQuoteAction(input: z.input<typeof previewInput>): Promise<DealActionResult<QuotePreview>> {
+  const p = previewInput.safeParse(input);
+  if (!p.success) return invalid(p.error);
+  return deal((actor) => previewQuote(p.data, actor), false);
+}
+
+const sendQuoteInput = z.object({ conversationId: id, code, pax, pricePerPax: paise, confirmBelowFloor: z.boolean().optional() });
+
+export async function sendQuoteAction(input: z.input<typeof sendQuoteInput>): Promise<DealActionResult<{ quoteId: string; pricePerPax: number; totalAmount: number }>> {
+  const p = sendQuoteInput.safeParse(input);
+  if (!p.success) return invalid(p.error);
+  return deal(async (actor, ip) => {
+    const q = await sendQuote(p.data, actor, { ip });
+    return { quoteId: q.quoteId, pricePerPax: q.pricePerPax, totalAmount: q.totalAmount };
+  });
+}
+
+// Note: no suggested price in the input. The suggestion always comes from the engine.
+const askOwnerInput = z.object({ conversationId: id, code, pax, requestedPricePerPax: paise.nullable().optional(), note: z.string().max(300).nullable().optional() });
+
+export async function askOwnerAction(input: z.input<typeof askOwnerInput>): Promise<DealActionResult<{ approvalId: string }>> {
+  const p = askOwnerInput.safeParse(input);
+  if (!p.success) return invalid(p.error);
+  return deal(async (actor) => ({ approvalId: (await askOwner(p.data, actor)).approvalId }));
+}
+
+const decideInput = z.object({
+  approvalId: id,
+  action: z.enum(["APPROVE", "COUNTER", "DECLINE"]),
+  pricePerPax: paise.nullable().optional(),
+  confirmBelowFloor: z.boolean().optional(),
+  reason: z.string().max(300).nullable().optional(),
+});
+
+/** OWNER only (checked here and again in deals.decideApproval). */
+export async function decideApprovalAction(input: z.input<typeof decideInput>): Promise<DealActionResult<{ status: string; sendError: string | null }>> {
+  await requireUser("OWNER");
+  const p = decideInput.safeParse(input);
+  if (!p.success) return invalid(p.error);
+  const r = await deal(async (actor, ip) => {
+    const d = await decideApproval(p.data, actor, { ip });
+    return { status: d.status, sendError: "sendError" in d ? d.sendError : null };
+  });
+  revalidatePath(`/approvals/${p.data.approvalId}`);
+  return r;
+}
+
+const linkInput = z.object({ quoteId: id, purpose: z.enum(["ADVANCE", "FULL"]).optional() });
+
+export async function sendPaymentLinkAction(input: z.input<typeof linkInput>): Promise<DealActionResult<{ queued: true }>> {
+  const p = linkInput.safeParse(input);
+  if (!p.success) return invalid(p.error);
+  return deal(async (actor) => {
+    await sendPaymentLink(p.data, actor);
+    return { queued: true as const };
+  });
+}
+
+export async function sendFollowUpAction(conversationId: string): Promise<DealActionResult<{ via: "text" | "template" }>> {
+  const p = id.safeParse(conversationId);
+  if (!p.success) return invalid(p.error);
+  return deal(async (actor) => ({ via: (await sendFollowUp({ conversationId: p.data }, actor)).via }));
 }

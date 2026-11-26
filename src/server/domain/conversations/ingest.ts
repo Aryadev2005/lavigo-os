@@ -174,7 +174,7 @@ async function saveInbound(
         "lastInboundAt" = GREATEST(COALESCE("lastInboundAt", ${at}), ${at}),
         "lastMessageAt" = GREATEST("lastMessageAt", ${at}),
         "unreadCount"   = "unreadCount" + 1,
-        status = CASE WHEN status IN ('CLOSED', 'FOLLOW_UP') THEN 'ACTIVE'::"ConversationStatus" ELSE status END,
+        status = CASE WHEN status = 'CLOSED' THEN 'ACTIVE'::"ConversationStatus" WHEN status = 'FOLLOW_UP' THEN 'QUOTED'::"ConversationStatus" ELSE status END,
         "updatedAt" = now()
       WHERE id = ${conversationId}`;
     return msg.id;

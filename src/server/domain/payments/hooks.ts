@@ -1,9 +1,10 @@
 /**
- * Extension points after a payment is captured and committed.
- * P4 sends the customer's WhatsApp confirmation (DESK-6, PAY-2) from onPaymentCaptured.
+ * Extension points after a payment is captured and committed (PAY-2 "then, async").
+ * The deal desk confirms to the customer in their chat (DESK-6).
  */
-import { logger } from "../../logger";
+import { confirmPaymentToCustomer } from "../deals/confirmations";
+import type { ApplyOutcome } from ".";
 
-export async function onPaymentCaptured(bookingId: string): Promise<void> {
-  logger.debug({ bookingId }, "onPaymentCaptured hook (no-op until P4)");
+export async function onPaymentCaptured(bookingId: string, info: { paymentId: string; amount: number; outcome: ApplyOutcome }): Promise<void> {
+  await confirmPaymentToCustomer(bookingId, info);
 }

@@ -352,7 +352,9 @@ interface ChannelAdapter {
 | `hold.expire` | delayed at `holdExpiresAt` | 5 | status re-check in txn |
 | `reminders.daily` | cron `0 10 * * *` IST | 1 | `ReminderLog` unique (booking, rule, date) |
 | `rfq.send` / `rfq.parseReply` (rule-based) / `rfq.nudge` (`*/15 * * * *`) | RFQ / supplier inbound / cron | 5 | recipient status machine |
-| `followups.scan` | cron `0 * * * *` | 1 | marks conversations "Follow-up due" (quote, no reply 20h); **no automatic sends** in v1 |
+| `followups.scan` | cron `0 * * * *` | 1 | marks conversations "Follow-up due" (quote, no reply 20h); expires quotes past validity; **no automatic sends** in v1 |
+| `approval.expire` | delayed at `Approval.expiresAt` (quote validity) | 1 | status re-check (`PENDING` only) |
+| `notify.owner` | `askOwner` | 1 | jobId per approval; best-effort `owner_approval` template to each owner's `User.phone` |
 | `tickets.windowReminders` | cron `*/5 * * * *` | 1 | marker per plan + reminder slot |
 | `campaign.send` | owner action | limiter | `CampaignRecipient` unique |
 | `campaign.attribute` | booking confirmed | 5 | idempotent update |

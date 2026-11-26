@@ -4,7 +4,10 @@ import { deliverMessage } from "@/server/channels/outbound";
 import type { InboundEventPayload } from "@/server/channels/types";
 import { applyStatus, ingestInbound, storeInboundMedia } from "@/server/domain/conversations/ingest";
 import { expireHold } from "@/server/domain/bookings";
+import { createQuoteLink, expireApproval, notifyOwnersOfApproval, scanFollowUps } from "@/server/domain/deals";
+import { sendInvoiceToChat } from "@/server/domain/deals/confirmations";
 import { createAndSendLink, runReminders } from "@/server/domain/dues";
+import { env } from "@/server/env";
 import { applyPaymentEvent } from "@/server/domain/payments";
 import { afterPaymentCaptured } from "@/server/domain/payments/effects";
 import { db } from "@/server/db";
@@ -93,9 +96,14 @@ export const PROCESSORS: Partial<Record<QueueName, Processor>> = {
       throw err;
     }
   },
-  // Create (or reuse) a payment link and, unless send=false, send it with the payment_reminder template.
-  "payment.createLink": async (job) =>
-    createAndSendLink(job.data as { bookingId: string; purpose: "ADVANCE" | "BALANCE" | "FULL"; send?: boolean; requestedById?: string | null }),
+  // From a quote (deal desk): hold seats → booking → link card. From Dues: create (or reuse) a link and,
+  // unless send=false, send it with the payment_reminder template.
+  "payment.createLink": async (job) => {
+    const d = job.data as
+      | { quoteId: string; purpose: "ADVANCE" | "FULL"; requestedById: string }
+      | { bookingId: string; purpose: "ADVANCE" | "BALANCE" | "FULL"; send?: boolean; requestedById?: string | null };
+    return "quoteId" in d ? createQuoteLink(d) : createAndSendLink(d);
+  },
   // All PDFs: invoice + receipt after a payment, or { kind: "invoice" | "itinerary" } on demand from the drawer.
   "invoice.render": async (job) => {
     const d = job.data as { bookingId: string; paymentId?: string; kind?: "invoice" | "itinerary"; departureId?: string };
@@ -103,11 +111,18 @@ export const PROCESSORS: Partial<Record<QueueName, Processor>> = {
       d.kind === "itinerary" && d.departureId
         ? { itineraryDocumentId: (await renderItinerary(d.departureId, d.bookingId)).id }
         : await renderPaymentDocuments(d);
+    // DESK-6: the invoice follows the confirmation into the customer's chat (once).
+    if (d.paymentId && "invoiceDocumentId" in result) {
+      await sendInvoiceToChat(d.bookingId, result.invoiceDocumentId).catch((err) => logger.error({ err, bookingId: d.bookingId }, "invoice to chat failed"));
+    }
     await publish({ type: "booking.updated", payload: { bookingId: d.bookingId } }).catch(() => undefined);
     return result;
   },
   "reminders.daily": async () => runReminders(),
   "webhooks.sweep": async () => sweepWebhooks(),
+  "followups.scan": async () => scanFollowUps(),
+  "approval.expire": async (job) => ({ outcome: await expireApproval((job.data as { approvalId: string }).approvalId) }),
+  "notify.owner": async (job) => notifyOwnersOfApproval((job.data as { approvalId: string }).approvalId, env.APP_URL),
   "hold.expire": async (job) => {
     const outcome = await expireHold((job.data as { bookingId: string }).bookingId);
     logger.info({ bookingId: (job.data as { bookingId: string }).bookingId, outcome }, "hold.expire");
