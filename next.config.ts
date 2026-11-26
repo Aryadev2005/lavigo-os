@@ -25,7 +25,7 @@ const nextConfig: NextConfig = {
     // Enables forbidden() → src/app/forbidden.tsx (403) for role checks in requireUser().
     authInterrupts: true,
   },
-  serverExternalPackages: ["@node-rs/argon2", "pino", "bullmq", "ioredis"],
+  serverExternalPackages: ["@node-rs/argon2", "pino", "bullmq", "ioredis", "@react-pdf/renderer"],
   turbopack: {
     rules: {
       "*.css": {

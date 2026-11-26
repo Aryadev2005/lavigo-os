@@ -29,6 +29,8 @@ const schema = z.object({
   AUTH_SECRET: z.string().min(1),
 
   S3_ENDPOINT: optionalString,
+  /** Endpoint the BROWSER uses for presigned URLs (dev: http://localhost:9000). Defaults to S3_ENDPOINT. */
+  S3_PUBLIC_ENDPOINT: optionalString,
   S3_REGION: z.string().default("ap-south-1"),
   S3_BUCKET: z.string().default("lavigo"),
   S3_ACCESS_KEY: optionalString,
