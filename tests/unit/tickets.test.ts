@@ -123,3 +123,13 @@ describe("fareAlert (TKT-4)", () => {
     expect(a?.rise).toBe(rupees(730));
   });
 });
+
+describe("extrasCategory (PRF-2)", () => {
+  it("cab, transfer, taxi or bus → TRANSPORT; anything else → OTHER", async () => {
+    const { extrasCategory } = await import("@/server/domain/tickets/core");
+    expect(extrasCategory("Shared cab NJP → Gangtok")).toBe("TRANSPORT");
+    expect(extrasCategory("Airport transfer")).toBe("TRANSPORT");
+    expect(extrasCategory("Extra hotel night (share of 2 rooms)")).toBe("OTHER");
+    expect(extrasCategory(null)).toBe("OTHER");
+  });
+});

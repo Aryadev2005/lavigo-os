@@ -190,3 +190,8 @@ export function unticketed(bookings: readonly BookingForTickets[], ticketed: rea
 
 /** A stable fingerprint of a split, to detect that it changed between preview and confirm. */
 export const splitSignature = (groups: readonly TicketPlan[]) => groups.map((g) => g.passengers.map((p) => `${p.bookingId}:${p.travellerId ?? "-"}`).join(",")).join("|");
+
+/** Hidden extras become their own expense: TRANSPORT when the note is about getting around, else OTHER. */
+export function extrasCategory(note: string | null): "TRANSPORT" | "OTHER" {
+  return note && /\b(cabs?|transfers?|taxis?|bus(es)?)\b/i.test(note) ? "TRANSPORT" : "OTHER";
+}
