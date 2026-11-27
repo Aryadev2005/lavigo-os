@@ -7,9 +7,15 @@
  * The seed WIPES every table first. v1 has no AI: the demo's "AI:" lines are re-authored as
  * staff (Author.OWNER) or system messages, and no AI-only column is written.
  *
- *   make seed
+ * This file is also the SINGLE SOURCE OF TRUTH for the WhatsApp templates (TEMPLATES below), the
+ * reminder rules and the standing offers: prisma/seed-prod.ts, docs/META-TEMPLATES.md
+ * (scripts/gen-meta-templates.ts) and tests/unit/templates.test.ts all import them from here.
+ * Importing this module never seeds; the demo seed runs only when this file is the entry point.
+ *
+ *   make seed            (dev)   ·   make demo-reset   (wipe + demo seed)
  */
 import { randomBytes } from "node:crypto";
+import path from "node:path";
 import {
   type BookingSource,
   type Channel,
@@ -24,22 +30,154 @@ import { rupees } from "../src/server/money";
 import { addDays, formatDate, istDateString, istDateStringOf, istDateTime, todayIST } from "../src/server/time";
 import { pnrSplit, unticketed, windowOpensAt } from "../src/server/domain/tickets/core";
 
-// Refuse to wipe a production database by accident.
-if (process.env.NODE_ENV === "production") {
-  const demoOptIn = process.env.SEED_DEMO === "true";
-  const forced = process.argv.includes("--force");
-  if (!demoOptIn || !forced) {
-    console.error(
-      [
-        "Refusing to seed: NODE_ENV=production.",
-        "This seed TRUNCATES EVERY TABLE and loads demo data.",
-        `  SEED_DEMO=true: ${demoOptIn ? "yes" : "no"}   --force: ${forced ? "yes" : "no"}`,
-        "Both are required, e.g.: SEED_DEMO=true pnpm seed --force",
-      ].join("\n"),
-    );
-    process.exit(1);
-  }
+// ───────────────────────────── shared base data (single source of truth) ─────────────────────────────
+
+export type TemplateSeed = {
+  /** Exact name registered with Meta and used in code. */
+  name: string;
+  category: "UTILITY" | "MARKETING";
+  /** Meta language code. */
+  language: string;
+  /** PAYMENT_REMINDER | RFQ | CAMPAIGN | FOLLOW_UP | DOC_CHECKLIST | BOOKING_CONFIRMED | OWNER_APPROVAL | TICKET_WINDOW */
+  purpose: string;
+  /** Body exactly as submitted to Meta, with {{1}}… placeholders. */
+  body: string;
+  /** Variable names in placeholder order ({{1}} = variables[0]). */
+  variables: string[];
+  /** One sample value per variable, for the Meta submission form. */
+  samples: string[];
+  /** Who receives it and when, for docs/META-TEMPLATES.md. */
+  usedFor: string;
+};
+
+/**
+ * Every WhatsApp template the app sends. Bodies follow Meta's rules (sequential {{n}}, never starting
+ * or ending with a variable); tests/unit/templates.test.ts checks that, and that every template
+ * name used in src/ is listed here and every one listed here is used.
+ */
+export const TEMPLATES: readonly TemplateSeed[] = [
+  {
+    name: "payment_reminder",
+    category: "UTILITY",
+    language: "en",
+    purpose: "PAYMENT_REMINDER",
+    body: "Hi {{1}}, a friendly reminder: your balance of {{2}} for {{3}} is due on {{4}}. Pay securely here: {{5}} Thank you for travelling with Lavigo.",
+    variables: ["name", "amount", "trip", "due_date", "pay_link"],
+    samples: ["Riya", "₹60,395", "Nepal · Pokhara & Kathmandu", "18 Dec", "https://rzp.io/l/LvgA1b2C"],
+    usedFor: "Customer, by the payment reminder rules (7 days before and on the due date) and Payments & dues → Send link.",
+  },
+  {
+    name: "payment_overdue",
+    category: "UTILITY",
+    language: "en",
+    purpose: "PAYMENT_REMINDER",
+    body: "Hi {{1}}, your balance of {{2}} for {{3}} was due on {{4}}. Please pay here to keep your seats: {{5}} Reply here if you need more time.",
+    variables: ["name", "amount", "trip", "due_date", "pay_link"],
+    samples: ["Riya", "₹60,395", "Nepal · Pokhara & Kathmandu", "18 Dec", "https://rzp.io/l/LvgA1b2C"],
+    usedFor: "Customer, by the 3-days-late reminder rule.",
+  },
+  {
+    name: "booking_confirmed",
+    category: "UTILITY",
+    language: "en",
+    purpose: "BOOKING_CONFIRMED",
+    body: "Hi {{1}}, booking {{2}} for {{3}} ({{4}} travellers) is confirmed. We received {{5}}. Balance {{6}} is due by {{7}}. Thank you for booking with Lavigo.",
+    variables: ["name", "booking_code", "trip", "pax", "paid", "balance", "due_date"],
+    samples: ["Riya", "LVG-24901", "Nepal · Pokhara & Kathmandu", "6", "₹19,799", "₹59,395", "8 Dec"],
+    usedFor: "Customer, automatically after the first payment confirms a booking when the chat's 24-hour window is closed.",
+  },
+  {
+    name: "rfq_request",
+    category: "UTILITY",
+    language: "en",
+    purpose: "RFQ",
+    body: "Hello {{1}}, Lavigo Travel here. Please share your best rate for {{2}} {{3}} rooms ({{4}}) in {{5}}, check-in {{6}} for {{7}} nights. Reply with your rate per room per night.",
+    variables: ["supplier", "rooms", "category", "meal_plan", "destination", "check_in", "nights"],
+    samples: ["Hotel Snow View", "8", "deluxe", "with breakfast", "Darjeeling", "12 Jan", "3"],
+    usedFor: "Hotel suppliers, from Supplier desk → Request rates (and the nudge to suppliers who haven't replied).",
+  },
+  {
+    name: "owner_approval",
+    category: "UTILITY",
+    language: "en",
+    purpose: "OWNER_APPROVAL",
+    body: "Approval needed: {{1}} ({{2}} travellers, {{3}}) asks {{4}} per person. Suggested: {{5}}. Open {{6}} to approve, counter or decline.",
+    variables: ["customer", "pax", "trip", "asked", "suggested", "link"],
+    samples: ["Riya Sharma", "6", "Nepal 22 Dec", "₹12,500", "₹13,199", "https://os.lavigo.in/approvals/abc123"],
+    usedFor: "The owner's own WhatsApp, when staff tap Ask owner.",
+  },
+  {
+    name: "ticket_window",
+    category: "UTILITY",
+    language: "en",
+    purpose: "TICKET_WINDOW",
+    body: "Reminder: train bookings for {{1}} open at {{2}}. Log in to IRCTC a few minutes early.",
+    variables: ["plan", "opens"],
+    samples: ["Nepal · group", "Mon 21 Sep, 8:00 AM"],
+    usedFor: "The owner's own WhatsApp, the evening before and the morning an IRCTC booking window opens (Tickets desk).",
+  },
+  {
+    name: "doc_checklist",
+    category: "UTILITY",
+    language: "en",
+    purpose: "DOC_CHECKLIST",
+    body: "Hi {{1}}, for {{2}} on {{3}} please send: {{4}}. Just reply here with photos.",
+    variables: ["name", "trip", "date", "documents"],
+    samples: ["Riya", "Nepal · Pokhara & Kathmandu", "22 Dec", "a photo ID for every traveller (Aadhaar, voter ID or passport) and their age"],
+    usedFor: "Lead traveller of every confirmed booking, from Departures → Send checklist.",
+  },
+  {
+    name: "follow_up",
+    category: "MARKETING",
+    language: "en",
+    purpose: "FOLLOW_UP",
+    body: "Hi {{1}}, just checking in on your {{2}} plan. Seats are filling up. Shall we hold {{3}} seats for you?",
+    variables: ["name", "trip", "pax"],
+    samples: ["Riya", "Nepal 22 Dec", "6"],
+    usedFor: "Opted-in customers with an unanswered quote, from the inbox Follow up button when the 24-hour window is closed.",
+  },
+  {
+    name: "seat_fill_offer",
+    category: "MARKETING",
+    language: "en",
+    purpose: "CAMPAIGN",
+    body: "Hi {{1}}! {{2}} on {{3}}: only {{4}} seats left. Since you travelled with us before, here's {{5}} off till {{6}}. Book in 2 minutes: {{7}} Happy travels!",
+    variables: ["name", "trip", "date", "seats_left", "discount", "valid_until", "link"],
+    samples: ["Riya", "North Sikkim Snow Trip", "2 Feb", "17", "₹500", "Monday 30 Nov", "lavigo.in/sk-09j"],
+    usedFor: "Opted-in past travellers, enquiries and the waitlist, from Departures → Fill seats with a discount.",
+  },
+  {
+    name: "seat_fill_nudge",
+    category: "MARKETING",
+    language: "en",
+    purpose: "CAMPAIGN",
+    body: "Hi {{1}}! {{2}} on {{3}}: only {{4}} seats left. Book in 2 minutes: {{5}} Happy travels!",
+    variables: ["name", "trip", "date", "seats_left", "link"],
+    samples: ["Riya", "North Sikkim Snow Trip", "2 Feb", "17", "lavigo.in/sk-09j"],
+    usedFor: "Same audience as seat_fill_offer, when Fill seats is sent without a discount.",
+  },
+];
+
+/** MessageTemplate row for a template. metaStatus: APPROVED in dev/demo; production starts PENDING. */
+export function templateRow(t: TemplateSeed, metaStatus: "APPROVED" | "PENDING") {
+  return { name: t.name, category: t.category, language: t.language, purpose: t.purpose, bodyPreview: t.body, variables: [...t.variables], metaStatus };
 }
+
+/** Payment reminder rules (PAY-6). */
+export const REMINDER_RULES = [
+  { key: "before_7d", name: "7 days before due", description: "Friendly heads-up + UPI link", anchor: "DUE_DATE", offsetDays: -7, action: "SEND_REMINDER", templateName: "payment_reminder" },
+  { key: "on_due", name: "On the due date", description: "Reminder + UPI link", anchor: "DUE_DATE", offsetDays: 0, action: "SEND_REMINDER", templateName: "payment_reminder" },
+  { key: "late_3d", name: "3 days late", description: "Firm reminder", anchor: "DUE_DATE", offsetDays: 3, action: "SEND_REMINDER", templateName: "payment_overdue" },
+  { key: "late_7d", name: "7 days late", description: "Ask you to call · flag on Today", anchor: "DUE_DATE", offsetDays: 7, action: "FLAG_OWNER" },
+  { key: "seat_release", name: "Seat release", description: "Release unpaid seats 10 days before travel", anchor: "TRAVEL_DATE", offsetDays: -10, action: "RELEASE_SEATS", enabled: false },
+] as const satisfies readonly Prisma.ReminderRuleCreateManyInput[];
+
+/** Standing offers (PRC-2), editable on Pricing rules. */
+export const BASE_OFFERS = [
+  { kind: "GROUP", name: "Group offer", description: "₹500 off per person for 6 or more", amountPerPax: rupees(500), minPax: 6 },
+  { kind: "EARLY_BIRD", name: "Early-bird", description: "₹750 off when booked 45+ days before", amountPerPax: rupees(750), minDaysBeforeTravel: 45 },
+  { kind: "REPEAT_TRAVELLER", name: "Repeat traveller", description: "₹500 off for anyone who travelled with Lavigo before", amountPerPax: rupees(500) },
+] as const satisfies readonly Prisma.OfferCreateManyInput[];
 
 const db = new PrismaClient();
 
@@ -130,41 +268,10 @@ async function seedRules(ownerId: string) {
   // Singleton id = 1. Schema defaults are the demo's rules (17% floor, ₹0 staff discount, 25% advance…).
   await db.agentSettings.create({ data: { id: 1, updatedById: ownerId } });
 
-  await db.offer.createMany({
-    data: [
-      { kind: "GROUP", name: "Group offer", description: "₹500 off per person for 6 or more", amountPerPax: rupees(500), minPax: 6 },
-      { kind: "EARLY_BIRD", name: "Early-bird", description: "₹750 off when booked 45+ days before", amountPerPax: rupees(750), minDaysBeforeTravel: 45 },
-      { kind: "REPEAT_TRAVELLER", name: "Repeat traveller", description: "₹500 off for anyone who travelled with Lavigo before", amountPerPax: rupees(500) },
-    ],
-  });
+  await db.offer.createMany({ data: [...BASE_OFFERS] });
+  await db.reminderRule.createMany({ data: [...REMINDER_RULES] });
 
-  await db.reminderRule.createMany({
-    data: [
-      { key: "before_7d", name: "7 days before due", description: "Friendly heads-up + UPI link", anchor: "DUE_DATE", offsetDays: -7, action: "SEND_REMINDER", templateName: "payment_reminder" },
-      { key: "on_due", name: "On the due date", description: "Reminder + UPI link", anchor: "DUE_DATE", offsetDays: 0, action: "SEND_REMINDER", templateName: "payment_reminder" },
-      { key: "late_3d", name: "3 days late", description: "Firm reminder", anchor: "DUE_DATE", offsetDays: 3, action: "SEND_REMINDER", templateName: "payment_overdue" },
-      { key: "late_7d", name: "7 days late", description: "Ask you to call · flag on Today", anchor: "DUE_DATE", offsetDays: 7, action: "FLAG_OWNER" },
-      { key: "seat_release", name: "Seat release", description: "Release unpaid seats 10 days before travel", anchor: "TRAVEL_DATE", offsetDays: -10, action: "RELEASE_SEATS", enabled: false },
-    ],
-  });
-
-  // Mirrors of templates registered with Meta. Marked APPROVED so the dev fakes can send them.
-  const t = (name: string, category: "UTILITY" | "MARKETING", purpose: string, bodyPreview: string, variables: string[]) => ({
-    name, category, purpose, bodyPreview, variables, metaStatus: "APPROVED",
-  });
-  await db.messageTemplate.createMany({
-    data: [
-      t("payment_reminder", "UTILITY", "PAYMENT_REMINDER", "Hi {{1}}, a friendly reminder: your balance of {{2}} for {{3}} is due on {{4}}. Pay securely here: {{5}}", ["name", "amount", "trip", "due_date", "pay_link"]),
-      t("payment_overdue", "UTILITY", "PAYMENT_REMINDER", "Hi {{1}}, your balance of {{2}} for {{3}} was due on {{4}}. Please pay here to keep your seats: {{5}}", ["name", "amount", "trip", "due_date", "pay_link"]),
-      t("rfq_request", "UTILITY", "RFQ", "Hello {{1}}, Lavigo Travel here. Please share your best rate for {{2}} {{3}} rooms ({{4}}) in {{5}}, check-in {{6}} for {{7}} nights. Reply with your rate per room per night.", ["supplier", "rooms", "category", "meal_plan", "destination", "check_in", "nights"]),
-      t("seat_fill_offer", "MARKETING", "CAMPAIGN", "Hi {{1}}! {{2}} on {{3}}: only {{4}} seats left. Since you travelled with us before, here's {{5}} off till {{6}}. Book in 2 minutes: {{7}}", ["name", "trip", "date", "seats_left", "discount", "valid_until", "link"]),
-      t("seat_fill_nudge", "MARKETING", "CAMPAIGN", "Hi {{1}}! {{2}} on {{3}}: only {{4}} seats left. Book in 2 minutes: {{5}}", ["name", "trip", "date", "seats_left", "link"]),
-      t("follow_up", "MARKETING", "FOLLOW_UP", "Hi {{1}}, just checking in on your {{2}} plan. Seats are filling up. Shall we hold {{3}} seats for you?", ["name", "trip", "pax"]),
-      t("doc_checklist", "UTILITY", "DOC_CHECKLIST", "Hi {{1}}, for {{2}} on {{3}} please send: {{4}}. Just reply here with photos.", ["name", "trip", "date", "documents"]),
-      t("booking_confirmed", "UTILITY", "BOOKING_CONFIRMED", "Hi {{1}}, booking {{2}} for {{3}} ({{4}} travellers) is confirmed. We received {{5}}. Balance {{6}} is due by {{7}}.", ["name", "booking_code", "trip", "pax", "paid", "balance", "due_date"]),
-      t("owner_approval", "UTILITY", "OWNER_APPROVAL", "Approval needed: {{1}} ({{2}} travellers, {{3}}) asks {{4}} per person. Suggested: {{5}}. Decide: {{6}}", ["customer", "pax", "trip", "asked", "suggested", "link"]),
-    ],
-  });
+  await db.messageTemplate.createMany({ data: TEMPLATES.map((t) => templateRow(t, "APPROVED")) });
 }
 
 // ───────────────────────────── catalog ─────────────────────────────
@@ -984,7 +1091,8 @@ async function seedReminderHistory() {
 
 // ───────────────────────────── main ─────────────────────────────
 
-async function main() {
+/** Wipe every table and load the demo data. Callers decide whether wiping is allowed. */
+export async function seedDemo() {
   console.log(`Seeding Lavigo OS demo data · today (IST) = ${istDateStringOf(TODAY)}`);
   await wipe();
   const { owner, staff, generated } = await seedUsers();
@@ -1023,9 +1131,29 @@ async function main() {
   }
 }
 
-main()
-  .catch((err: unknown) => {
-    console.error(err);
-    process.exit(1);
-  })
-  .finally(() => db.$disconnect());
+// Runs only as the entry point (tsx prisma/seed.ts, node dist/seed.js), never when imported.
+const entry = path.basename(process.argv[1] ?? "");
+if (entry === "seed.ts" || entry === "seed.js") {
+  // Refuse to wipe a production database by accident.
+  if (process.env.NODE_ENV === "production") {
+    const demoOptIn = process.env.SEED_DEMO === "true";
+    const forced = process.argv.includes("--force");
+    if (!demoOptIn || !forced) {
+      console.error(
+        [
+          "Refusing to seed: NODE_ENV=production.",
+          "This seed TRUNCATES EVERY TABLE and loads demo data.",
+          `  SEED_DEMO=true: ${demoOptIn ? "yes" : "no"}   --force: ${forced ? "yes" : "no"}`,
+          "Both are required, e.g.: SEED_DEMO=true pnpm seed --force",
+        ].join("\n"),
+      );
+      process.exit(1);
+    }
+  }
+  seedDemo()
+    .catch((err: unknown) => {
+      console.error(err);
+      process.exit(1);
+    })
+    .finally(() => db.$disconnect());
+}

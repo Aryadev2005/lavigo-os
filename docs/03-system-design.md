@@ -332,22 +332,24 @@ interface ChannelAdapter {
 - **Implementation notes (v1):**
   - A webhook delivery is split into one `WebhookEvent` per item: `msg:<wamid>` for messages and `status:<wamid>:<status>` for delivery statuses (a message gets several). A duplicate whose `processedAt` is null is re-enqueued with jobId = event id, and `webhooks.sweep` covers WhatsApp and Instagram events as well as Razorpay ones.
   - A status that arrives before the send has stored the provider id is retried for 2 minutes, then ignored. Statuses only move forward (✓ → ✓✓ → read).
-  - Marketing templates (`follow_up`, `seat_offer`) are blocked with `NOT_OPTED_IN` unless `Customer.marketingOptIn`. Instagram has no templates, so outside the window it is reply-when-they-write-again.
+  - Marketing templates (`follow_up`, `seat_fill_offer`, `seat_fill_nudge`) are blocked with `NOT_OPTED_IN` unless `Customer.marketingOptIn`. Instagram has no templates, so outside the window it is reply-when-they-write-again.
   - Chat media (inbound and attachments) is stored as `Document` kind `CHAT_MEDIA` (keys under `chat/`). `/api/files/[id]` lets both roles open those and audits every download (customers send ID photos in chat); `OTHER` documents stay owner-only.
   - In dev, `META_APP_SECRET`/`WA_VERIFY_TOKEN` fall back to fixed dev values so `make inbound args='…'` (scripts/simulate-inbound.ts) can sign payloads. Production refuses to boot without them.
 
-**Templates to register with Meta on Thursday** (names are used verbatim in code and seed):
+**Templates.** `prisma/seed.ts` (`TEMPLATES`) is the single source of truth: name, category, language, body with `{{n}}` placeholders, variables, purpose and Meta sample values. `pnpm seed:prod` syncs them into `MessageTemplate`, and `pnpm templates:doc` generates [`docs/META-TEMPLATES.md`](META-TEMPLATES.md), the exact list to submit to Meta. `tests/unit/templates.test.ts` fails if code uses a template name that isn't seeded, if a seeded template is unused, if a body breaks Meta's placeholder rules, or if the doc is stale. A template is sent only once its `metaStatus` is `APPROVED` (`pnpm seed:prod --approve-templates` after Meta approves them).
 
-| name | category | purpose | variables |
-|---|---|---|---|
-| `payment_reminder` | UTILITY | balance reminder + link button | name, trip, amount, due date |
-| `payment_overdue` | UTILITY | firm reminder | name, trip, amount, days late |
-| `booking_confirmed` | UTILITY | confirmation + invoice | name, booking code, trip, amount paid |
-| `rfq_request` | UTILITY | supplier rate request | supplier, destination, check-in, nights, rooms, category, meal plan |
-| `owner_approval` | UTILITY | owner alert | customer, ask, suggestion, link suffix |
-| `doc_checklist` | UTILITY | document checklist | name, trip, date |
-| `follow_up` | MARKETING | quote follow-up | name, trip |
-| `seat_offer` | MARKETING | fill-seats campaign | name, trip, date, seats left, offer, link |
+| name | category | purpose | variables | sent by |
+|---|---|---|---|---|
+| `payment_reminder` | UTILITY | PAYMENT_REMINDER | name, amount, trip, due_date, pay_link | reminder rules (7 days before, on the due date); Dues → Send link |
+| `payment_overdue` | UTILITY | PAYMENT_REMINDER | name, amount, trip, due_date, pay_link | reminder rule: 3 days late |
+| `booking_confirmed` | UTILITY | BOOKING_CONFIRMED | name, booking_code, trip, pax, paid, balance, due_date | automatic confirmation when the 24h window is closed |
+| `rfq_request` | UTILITY | RFQ | supplier, rooms, category, meal_plan, destination, check_in, nights | Supplier desk → Request rates / nudge |
+| `owner_approval` | UTILITY | OWNER_APPROVAL | customer, pax, trip, asked, suggested, link | Ask owner → owner's WhatsApp |
+| `ticket_window` | UTILITY | TICKET_WINDOW | plan, opens | IRCTC window reminders → owner's WhatsApp |
+| `doc_checklist` | UTILITY | DOC_CHECKLIST | name, trip, date, documents | Departures → Send checklist |
+| `follow_up` | MARKETING | FOLLOW_UP | name, trip, pax | inbox Follow up (window closed, opted-in only) |
+| `seat_fill_offer` | MARKETING | CAMPAIGN | name, trip, date, seats_left, discount, valid_until, link | Departures → Fill seats with a discount |
+| `seat_fill_nudge` | MARKETING | CAMPAIGN | name, trip, date, seats_left, link | Departures → Fill seats without a discount |
 
 ---
 
