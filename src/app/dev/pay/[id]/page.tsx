@@ -1,23 +1,27 @@
 /**
- * DEV ONLY: stands in for Razorpay's hosted checkout when the payment adapter is fake.
+ * DEV / DEMO ONLY: stands in for Razorpay's hosted checkout when the payment adapter is fake.
  * "Pay" posts a correctly signed payment_link.paid webhook to our own endpoint, exercising the
- * exact production path (verify → WebhookEvent → payment.apply job). 404 in production.
+ * exact production path (verify → WebhookEvent → payment.apply job). 404 in production unless the
+ * deployment is an explicit DEMO_FAKES demo. Signed-in users only: in a demo the staff (playing
+ * the customer in the Sandbox) open the link; nobody on the internet can "pay" a demo booking.
  */
 import { notFound, redirect } from "next/navigation";
 import { db } from "@/server/db";
 import { env } from "@/server/env";
 import { inr } from "@/server/money";
 import { buildPaymentLinkPaid, postSignedWebhook } from "@/server/payments/simulate";
+import { requireUser } from "@/server/rbac";
 
 export const dynamic = "force-dynamic";
 
 function devOnly() {
-  if (env.isProd || env.providers.razorpay !== "fake") notFound();
+  if ((env.isProd && !env.demoFakes) || env.providers.razorpay !== "fake") notFound();
 }
 
 async function pay(formData: FormData) {
   "use server";
   devOnly();
+  await requireUser();
   const id = String(formData.get("id"));
   const link = await db.paymentLink.findUnique({ where: { providerLinkId: id }, include: { booking: { select: { code: true } } } });
   if (!link || link.status !== "CREATED") redirect(`/dev/pay/${id}`);
@@ -35,6 +39,7 @@ async function pay(formData: FormData) {
 
 export default async function DevPayPage(props: PageProps<"/dev/pay/[id]">) {
   devOnly();
+  await requireUser();
   const { id } = await props.params;
   const { sent } = await props.searchParams;
   const link = await db.paymentLink.findUnique({

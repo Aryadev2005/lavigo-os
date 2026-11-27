@@ -1,6 +1,6 @@
 import type { NextConfig } from "next";
 
-// Strict CSP (system design §9): self, Google Fonts, data: images.
+// Strict CSP (system design §9, NFR-4): self, Google Fonts, data:/blob: images, no framing.
 // 'unsafe-inline' for styles is needed by next/font and React style props;
 // 'unsafe-eval' only in dev for React refresh.
 const isDev = process.env.NODE_ENV !== "production";
@@ -12,6 +12,7 @@ const csp = [
   "img-src 'self' data: blob:",
   "connect-src 'self'",
   "frame-ancestors 'none'",
+  "object-src 'none'",
   "base-uri 'self'",
   "form-action 'self'",
 ].join("; ");
@@ -46,6 +47,9 @@ const nextConfig: NextConfig = {
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
           { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=()" },
+          { key: "Cross-Origin-Opener-Policy", value: "same-origin" },
+          // HSTS only in production builds (Caddy serves HTTPS there); never on dev's http://localhost.
+          ...(isDev ? [] : [{ key: "Strict-Transport-Security", value: "max-age=63072000; includeSubDomains" }]),
         ],
       },
     ];

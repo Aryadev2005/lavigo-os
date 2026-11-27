@@ -1,6 +1,7 @@
 import Image from "next/image";
 import { MobileNav, SideNav } from "@/components/shell/nav";
 import { LiveAlerts } from "@/components/shell/live-alerts";
+import { ActionErrorToasts } from "@/components/shell/action-errors";
 import { ToastProvider } from "@/components/shell/toast";
 import { TopBar } from "@/components/shell/top-bar";
 import { getNavBadges } from "@/server/domain/dashboard/nav-badges";
@@ -19,6 +20,7 @@ export default async function AppLayout({ children }: { children: React.ReactNod
 
   return (
     <ToastProvider>
+      <ActionErrorToasts />
       <LiveAlerts role={user.role} />
       <div className="app">
         <aside className="side">

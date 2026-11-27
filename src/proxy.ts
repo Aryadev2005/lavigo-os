@@ -16,5 +16,5 @@ export function proxy(request: NextRequest, event: NextFetchEvent) {
 }
 
 export const config = {
-  matcher: ["/((?!_next/static|_next/image|favicon.ico|images/|fonts/|api/health|api/webhooks|api/stream|dev/pay).*)"],
+  matcher: ["/((?!_next/static|_next/image|favicon.ico|images/|fonts/|api/health|api/webhooks|api/stream).*)"],
 };

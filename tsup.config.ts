@@ -30,11 +30,13 @@ function copyRuntimeAssets() {
   }
 }
 
-// Bundles the BullMQ worker into a single dist/worker.js for the production image.
+// Bundles the BullMQ worker (dist/worker.js), the seeds (dist/seed.js, dist/seed-prod.js) and the
+// run-a-job-once script (dist/job.js) for the production image.
 // Everything is bundled except native/engine packages, which the Next standalone
 // output already ships in node_modules (@prisma/client, @node-rs/argon2).
 export default defineConfig({
-  entry: { worker: "src/worker/index.ts" },
+  // Seeds are bundled too: the production image has no tsx (`pnpm seed:prod` runs dist/seed-prod.js).
+  entry: { worker: "src/worker/index.ts", seed: "prisma/seed.ts", "seed-prod": "prisma/seed-prod.ts", job: "scripts/run-job.ts" },
   outDir: "dist",
   format: ["esm"],
   platform: "node",

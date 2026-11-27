@@ -14,15 +14,34 @@ export function authSecret(): string {
 
 const PUBLIC_PREFIXES = ["/api/health", "/api/auth", "/api/webhooks"];
 
+/** The login form is the only server action a signed-out browser may post; it's tiny. */
+export const MAX_ANON_ACTION_BYTES = 16 * 1024;
+
+/**
+ * Server-action POSTs (header `Next-Action`) from signed-out callers are refused here, in the proxy,
+ * before Next reads the body (the server-action body limit is 21 MB). Only /login may receive one,
+ * and only with a declared Content-Length ≤ 16 KB. Returns a 401 Response, or null to continue.
+ */
+export function rejectAnonymousAction(request: Request, isLoggedIn: boolean, path: string): Response | null {
+  if (isLoggedIn || request.method !== "POST" || !request.headers.has("next-action")) return null;
+  const len = request.headers.get("content-length");
+  const small = len !== null && /^\d+$/.test(len) && Number(len) <= MAX_ANON_ACTION_BYTES;
+  if (path === "/login" && small) return null;
+  return Response.json({ error: "unauthorized" }, { status: 401 });
+}
+
 export const authConfig = {
   pages: { signIn: "/login" },
   session: { strategy: "jwt", maxAge: 12 * 60 * 60 },
   trustHost: true,
   providers: [],
   callbacks: {
-    authorized({ auth, request: { nextUrl } }) {
+    authorized({ auth, request }) {
+      const { nextUrl } = request;
       const isLoggedIn = Boolean(auth?.user);
       const path = nextUrl.pathname;
+      const refused = rejectAnonymousAction(request, isLoggedIn, path);
+      if (refused) return refused;
       if (path === "/login") {
         return isLoggedIn ? Response.redirect(new URL("/today", nextUrl)) : true;
       }
