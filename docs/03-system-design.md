@@ -72,7 +72,7 @@ They share `src/server/**` (domain + adapters). Neither imports from the other's
 | ADR-6 | UI | **Tailwind CSS v4 + shadcn/ui primitives**, demo tokens as CSS vars, Outfit font, Recharts for the 6-month bars | Fast to build and match the demo. | — |
 | ADR-7 | LLM | **Deferred to v2.** No LLM dependency in v1. Planned: Anthropic Messages API with our own tool loop (Appendix A). | Scope decision 26 Nov: ship the operational core first. | — |
 | ADR-8 | PDFs | **@react-pdf/renderer** in the worker | JSX templates, no headless Chrome in prod. | Puppeteer: heavy image. |
-| ADR-9 | Files | **S3 API** (MinIO in dev/prod-small, any S3 later) | Private bucket plus presigned URLs. | Local disk: breaks with more than one container. |
+| ADR-9 | Files | **S3 API** (MinIO in dev; managed S3-compatible in prod: AWS ap-south-1 / R2 / Spaces) | Private bucket plus presigned URLs. | Local disk: breaks with more than one container. |
 | ADR-10 | Payments | **Razorpay Payment Links** | UPI + cards, hosted page, webhooks; no PCI scope. | Payment gateway checkout: needs a customer site. |
 | ADR-11 | Proxy / TLS | **Caddy** | Automatic HTTPS for webhooks; tiny config. | Nginx + certbot. |
 | ADR-12 | Tests | **Vitest** (unit + integration against a real Postgres in CI), **one Playwright smoke** | Only where money, seats, security or the guardrail can break. | Full e2e matrix: no time, low value now. |
@@ -91,7 +91,7 @@ They share `src/server/**` (domain + adapters). Neither imports from the other's
 │  ├─ Dockerfile.dev             # dev image (pnpm, prisma, hot reload)
 │  └─ Caddyfile
 ├─ docker-compose.yml            # dev: web, worker, postgres, redis, minio, mailpit
-├─ docker-compose.prod.yml       # prod: caddy, web, worker, postgres, redis, minio, backup
+├─ docker-compose.prod.yml       # prod: caddy, web, worker, migrate, postgres, redis, backup (managed S3)
 ├─ .github/workflows/ci.yml
 ├─ prisma/
 │  ├─ schema.prisma
@@ -480,17 +480,23 @@ Every command runs through the container: `docker compose run --rm web pnpm pris
 
 ### Prod (`docker-compose.prod.yml`)
 
-- Services: `caddy` → `web` (`node server.js` from Next standalone) + `worker` (same image, different command), plus `postgres`, `redis`, `minio`, and `backup` (pg_dump to MinIO on cron).
-- All have `restart: unless-stopped`. Only Caddy exposes ports 80/443.
-- Migrations run as a one-shot `migrate` service (`prisma migrate deploy`) that web and worker depend on with `service_completed_successfully`.
+- Services:
+  - `caddy` (the only service publishing ports, 80/443; `request_body max_size 22MB`; it overwrites `X-Forwarded-For` with the client address and never trusts an incoming one) → `web` (`node server.js` from Next standalone) + `worker` (same image, `node dist/worker.js`).
+  - `postgres:16` and `redis:7` (AOF, `noeviction`).
+  - A one-shot `migrate` (`prisma migrate deploy`). Web and worker depend on it with `service_completed_successfully`.
+  - `backup` (`docker/backup`: `pg_dump | gzip` to the S3 bucket under `backups/postgres/`, daily at 02:30 IST, keeping 14 days).
+- All have `restart: unless-stopped`. `web` uses `expose`, never `ports`: the login rate limit keys on the last `X-Forwarded-For` hop, which only holds while Caddy is the sole way in.
+- **Object storage is managed S3-compatible**: AWS S3 `ap-south-1`, Cloudflare R2 or DigitalOcean Spaces, via `S3_*`. MinIO is dev-only and not in the prod compose.
+- `docker-compose.prod.local.yml` runs the same stack locally and in CI e2e: Caddy on plain `:8080`, fakes allowed only through `DEMO_FAKES=true`, Sandbox on, and backup behind a profile. In production, `DEMO_FAKES` unset plus a missing key means web and worker exit at boot (`instrumentation.ts` / `assertEnv`).
+- One-off commands in the runtime image: `pnpm seed:prod` (non-destructive), `pnpm seed` (demo wipe; refused in production without `SEED_DEMO=true` and `--force`), and `pnpm job <name>`.
 
 `docker/Dockerfile` (multi-stage):
 
 1. **deps:** `pnpm fetch` + `install --frozen-lockfile`
 2. **build:** `prisma generate`, `next build` (standalone), `tsup src/worker/index.ts`
-3. **runner:** `node:22-bookworm-slim`, non-root user, copies `.next/standalone`, `.next/static`, `public`, `dist/worker.js`, `prisma/`, `node_modules/.prisma`
+3. **runner:** `node:22-bookworm-slim`, non-root user, `tini`, the `prisma` CLI. Copies `.next/standalone`, `.next/static`, `public`, `dist/` (worker, seed, seed-prod, job bundles plus PDF assets) and `prisma/`, and writes a scripts-only `package.json`.
 
-The final image targets < 400 MB.
+The final image is about 220 MB.
 
 ---
 
@@ -500,10 +506,10 @@ Triggers: push to any branch, pull_request. `concurrency` cancels superseded run
 
 | Job | Steps |
 |---|---|
-| `quality` | checkout → pnpm setup (cache) → `pnpm install --frozen-lockfile` → `prisma validate` → `prisma generate` → `pnpm lint` → `pnpm typecheck` |
+| `quality` | checkout → pnpm setup (cache) → `pnpm install --frozen-lockfile` → `prisma validate` → `prisma generate` → `pnpm lint` → `pnpm typecheck` → `pnpm check:actions` (auth/role on every server action, route handler and page; no LLM dependency) → `pnpm audit --prod --audit-level high` |
 | `test` (needs quality) | services: `postgres:16`, `redis:7` → `prisma migrate deploy` → `pnpm test` (unit + integration). Also a migration drift check: `prisma migrate diff --from-migrations prisma/migrations --to-schema-datamodel prisma/schema.prisma --shadow-database-url $SHADOW_URL --exit-code`. |
 | `build` (needs test) | `docker/build-push-action` with GHA cache; `push: true` only on `main` → `ghcr.io/<owner>/lavigo-os:{sha,latest}` |
-| `e2e` (needs build, main + manual dispatch) | compose up the built image with fakes, seed, `playwright test --trace off` (one smoke spec) |
+| `e2e` (needs build; every push and PR) | build the image from the GHA cache (`load: true`) → `docker-compose.prod.yml` + `prod.local.yml` with `DEMO_FAKES=true` → `pnpm seed:prod` with `SEED_DEMO=true` → `playwright test --trace off` (`tests/e2e/smoke.spec.ts`) → check that web and worker refuse to boot with `DEMO_FAKES` unset |
 
 No secrets are needed for CI. Every provider is faked. v1 has no LLM calls.
 
@@ -511,16 +517,18 @@ No secrets are needed for CI. Every provider is faked. v1 has no LLM calls.
 
 ## 14. Deployment runbook (v1)
 
-1. Provision a VPS (2 vCPU / 4 GB is enough for v1; Mumbai region recommended). Install Docker. Point a DNS A record at it.
-2. `git clone` the repo, then `cp .env.example .env.prod` and fill it in.
-3. `docker compose -f docker-compose.prod.yml --env-file .env.prod up -d` (pulls `ghcr.io/...:latest`).
-4. `docker compose ... run --rm web pnpm seed:prod`. This creates the owner user, settings, reminder rules and templates only; no demo data unless `SEED_DEMO=true`.
-5. Configure webhooks:
-   - Meta: callback `https://<domain>/api/webhooks/whatsapp`, verify token = `WA_VERIFY_TOKEN`, subscribe to `messages`.
-   - Razorpay: `https://<domain>/api/webhooks/razorpay`, events `payment_link.paid`, `payment.captured`.
-6. Smoke: `/api/health` → 200. A Sandbox chat gets a reply. Run `simulate-payment` (test mode).
+The step-by-step runbook lives in the README (*Production deployment runbook*): fresh Ubuntu VPS, DNS, Docker, firewall, `.env.prod`, `up -d --wait`, `pnpm seed:prod`, Meta and Razorpay webhooks, Razorpay test → live, backups and restore, troubleshooting. In short:
 
-Rollback: `docker compose ... up -d` with the previous image tag. Migrations are forward-only and additive during the client-fix phase.
+1. Provision a VPS (2 vCPU / 4 GB is enough for v1; Mumbai region recommended). Install Docker. Point a DNS A record at it. Open only 22/80/443.
+2. `git clone` the repo, then `cp .env.prod.example .env.prod` and fill it in.
+3. `docker compose -f docker-compose.prod.yml --env-file .env.prod up -d --wait` (pulls `ghcr.io/...:latest`; `migrate` runs first).
+4. `docker compose ... run --rm web pnpm seed:prod`. This creates the owner user, settings, reminder rules and templates only; it never wipes. Demo data only with `SEED_DEMO=true` into an empty database.
+5. Configure webhooks:
+   - Meta: callback `https://<domain>/api/webhooks/whatsapp`, verify token = `WA_VERIFY_TOKEN`, subscribe to `messages`. Submit `docs/META-TEMPLATES.md`.
+   - Razorpay: `https://<domain>/api/webhooks/razorpay`, events `payment_link.paid`, `payment.captured`.
+6. Smoke: `/api/health` → 200. A real WhatsApp message lands in the inbox. A ₹1 test-mode payment link confirms.
+
+Rollback: `LAVIGO_IMAGE=<previous sha tag>`, then `up -d`. Migrations are forward-only and additive during the client-fix phase.
 
 ---
 
