@@ -3,6 +3,7 @@
 #   web:    node server.js          (Next.js standalone, default CMD)
 #   worker: node dist/worker.js     (BullMQ worker bundled with tsup)
 #   migrate: prisma migrate deploy  (one-shot service in docker-compose.prod.yml)
+#   jobs:    pnpm job reminders     (dist/job.js; enqueues one run for the worker)
 #   seeds:   pnpm seed:prod         (dist/seed-prod.js; non-destructive) · pnpm seed (demo, refuses in prod without SEED_DEMO + --force)
 
 ARG NODE_IMAGE=node:22-bookworm-slim
@@ -61,7 +62,7 @@ COPY --from=build --chown=node:node /app/prisma ./prisma
 # A scripts-only package.json: no packageManager/dependencies, so pnpm never tries to install or
 # write a lockfile inside the read-only runtime image.
 COPY --from=build --chown=node:node /app/scripts/run-seed.mjs ./scripts/run-seed.mjs
-RUN node -e 'require("fs").writeFileSync("package.json", JSON.stringify({ name: "lavigo-os", private: true, type: "module", scripts: { seed: "node scripts/run-seed.mjs seed", "seed:prod": "node scripts/run-seed.mjs seed-prod" } }, null, 2))' \
+RUN node -e 'require("fs").writeFileSync("package.json", JSON.stringify({ name: "lavigo-os", private: true, type: "module", scripts: { seed: "node scripts/run-seed.mjs seed", "seed:prod": "node scripts/run-seed.mjs seed-prod", job: "node dist/job.js" } }, null, 2))' \
  && chown node:node package.json
 
 USER node
