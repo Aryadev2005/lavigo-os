@@ -341,6 +341,13 @@ function Options({ plan }: { plan: PlanView }) {
           </tr>
         </thead>
         <tbody>
+          {plan.options.length === 0 ? (
+            <tr>
+              <td colSpan={4} className="muted" style={{ textAlign: "center", padding: 20 }}>
+                No options yet. Add the first flight, train or bus.
+              </td>
+            </tr>
+          ) : null}
           {plan.options.map((opt) => (
             <tr key={opt.id} style={opt.disqualified ? { opacity: 0.6 } : undefined}>
               <td>

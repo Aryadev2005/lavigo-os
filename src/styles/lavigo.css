@@ -214,3 +214,7 @@ a.conv{color:inherit;text-decoration:none}
 .dealbar{display:flex;gap:8px;align-items:center;justify-content:space-between;flex-wrap:wrap;padding:8px 14px;background:#fff;border-top:1px solid var(--line);font-size:13px}
 .ipanel .approval .acts .btn{flex:1 1 auto}
 .ipanel .kv,.qbuilder .kv{gap:12px}.ipanel .kv b,.qbuilder .kv b{text-align:right}
+/* Loading skeletons (Today, Inbox) */
+.skel{display:block;border-radius:8px;background:linear-gradient(90deg,var(--lav2) 25%,var(--lav3) 50%,var(--lav2) 75%);background-size:200% 100%;animation:skel 1.2s ease-in-out infinite}
+@keyframes skel{0%{background-position:200% 0}100%{background-position:-200% 0}}
+@media (prefers-reduced-motion:reduce){.skel{animation:none}}
