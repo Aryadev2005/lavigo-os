@@ -8,6 +8,8 @@ export const dynamic = "force-dynamic";
 const MAX_BODY = 1_000_000;
 
 export async function POST(req: Request) {
+  // Refuse an oversized body before reading it (Caddy also caps requests at 22 MB).
+  if (Number(req.headers.get("content-length") ?? 0) > MAX_BODY) return Response.json({ error: "too large" }, { status: 413 });
   const raw = await req.text(); // raw bytes as sent: never re-serialise before verifying
   if (raw.length > MAX_BODY) return Response.json({ error: "too large" }, { status: 413 });
   try {

@@ -10,6 +10,7 @@
  * without a full runtime environment. Call `assertEnv()` at process start
  * (instrumentation.ts and the worker) to fail fast.
  */
+import { createHmac } from "node:crypto";
 import { z } from "zod";
 
 const emptyToUndefined = (v: unknown) => (typeof v === "string" && v.trim() === "" ? undefined : v);
@@ -54,6 +55,13 @@ const schema = z.object({
   IG_ACCOUNT_ID: optionalString,
   IG_ACCESS_TOKEN: optionalString,
   FEATURE_INSTAGRAM: boolString,
+  /**
+   * Production demo only: allow the fake adapters (WhatsApp, Razorpay, SMTP, storage) for any
+   * provider whose keys are unset, instead of refusing to boot. Never set on a real deployment.
+   */
+  DEMO_FAKES: boolString,
+  /** Fake storage root; production demos mount a volume shared by web and worker here. */
+  FAKE_STORAGE_DIR: optionalString,
   /** INB-3 customer simulator. Unset → on outside production, off in production. */
   FEATURE_SANDBOX: optionalBool,
 
@@ -83,6 +91,8 @@ export type ProviderMode = "real" | "fake";
 
 export type Env = RawEnv & {
   isProd: boolean;
+  /** Production running on fakes for a demo (DEMO_FAKES=true). */
+  demoFakes: boolean;
   isTest: boolean;
   providers: Record<Provider, ProviderMode>;
   secrets: Secrets;
@@ -123,7 +133,7 @@ export function parseEnv(source: Record<string, string | undefined> = process.en
       providers[provider] = allSet ? "real" : "fake";
       continue;
     }
-    if (isProd && !allSet) missing.push(...keys.filter((k) => !has(k)));
+    if (isProd && !allSet && !raw.DEMO_FAKES) missing.push(...keys.filter((k) => !has(k)));
     providers[provider] = allSet ? "real" : "fake";
   }
 
@@ -135,11 +145,14 @@ export function parseEnv(source: Record<string, string | undefined> = process.en
     }
   }
 
-  const secrets = Object.fromEntries(
-    (Object.keys(DEV_SECRETS) as (keyof Secrets)[]).map((k) => [k, raw[k] || (isProd ? "" : DEV_SECRETS[k])]),
-  ) as Secrets;
+  // Production demo on fakes: unset webhook/verify secrets are derived from AUTH_SECRET, so they
+  // are unique to the deployment and never the public dev values (forged "payments" stay out).
+  const demoFakes = isProd && raw.DEMO_FAKES;
+  const fallback = (k: keyof Secrets) =>
+    !isProd ? DEV_SECRETS[k] : demoFakes ? createHmac("sha256", raw.AUTH_SECRET!).update(`lavigo-demo:${k}`).digest("hex") : "";
+  const secrets = Object.fromEntries((Object.keys(DEV_SECRETS) as (keyof Secrets)[]).map((k) => [k, raw[k] || fallback(k)])) as Secrets;
 
-  return { ...raw, isProd, isTest: raw.NODE_ENV === "test", providers, secrets };
+  return { ...raw, isProd, demoFakes, isTest: raw.NODE_ENV === "test", providers, secrets };
 }
 
 let cached: Env | undefined;

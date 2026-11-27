@@ -56,7 +56,7 @@ class S3Storage implements ObjectStorage {
 
 class FakeStorage implements ObjectStorage {
   readonly mode = "fake" as const;
-  private readonly root = path.join(tmpdir(), "lavigo-storage");
+  private readonly root = env.FAKE_STORAGE_DIR ? path.resolve(env.FAKE_STORAGE_DIR) : path.join(tmpdir(), "lavigo-storage");
   private file(key: string) {
     const p = path.resolve(this.root, key);
     if (!p.startsWith(this.root + path.sep)) throw new Error("invalid key");
