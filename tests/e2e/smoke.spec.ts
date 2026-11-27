@@ -20,13 +20,13 @@ async function login(page: Page, who: { email: string; password: string }) {
   await Promise.all([page.waitForURL(/\/today/), page.click("button[type=submit]")]);
 }
 
-/** "27 of 30 seats sold" on the Nepal card. */
-async function nepalSeatsSold(page: Page): Promise<number> {
+/** "21 of 30 seats sold" on the Nepal card. */
+async function nepalSeats(page: Page): Promise<{ sold: number; total: number }> {
   await page.goto("/departures");
   const card = page.locator(".depc").filter({ hasText: "Nepal" }).first();
   const m = /(\d+) of (\d+) seats sold/.exec(await card.innerText());
   expect(m, "Nepal card shows seats sold").not.toBeNull();
-  return Number(m![1]);
+  return { sold: Number(m![1]), total: Number(m![2]) };
 }
 
 test.beforeAll(() => {
@@ -53,7 +53,9 @@ test("enquiry → quote → owner approval → payment → confirmed booking", a
   const staffCtx = await browser.newContext();
   const staff = await staffCtx.newPage();
   await login(staff, STAFF);
-  const seatsBefore = await nepalSeatsSold(staff);
+  const before = await nepalSeats(staff);
+  // The flow holds 6 Nepal seats; a second run on the same database would (correctly) be refused.
+  expect(before.total - before.sold, "needs a freshly seeded stack (make prod-local-down prod-local-up prod-local-seed)").toBeGreaterThanOrEqual(6 + 3);
 
   // Sandbox: a new customer says hello.
   await staff.goto("/sandbox");
@@ -171,7 +173,7 @@ test("enquiry → quote → owner approval → payment → confirmed booking", a
   await expect(row).not.toContainText("Held");
 
   // Nepal seats +6.
-  expect(await nepalSeatsSold(staff)).toBe(seatsBefore + 6);
+  expect((await nepalSeats(staff)).sold).toBe(before.sold + 6);
 
   await ownerCtx.close();
   await staffCtx.close();
