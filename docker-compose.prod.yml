@@ -29,7 +29,7 @@ x-app: &app
     APP_URL: ${APP_URL:?set APP_URL, e.g. https://os.lavigo.in}
     AUTH_URL: ${APP_URL}
     AUTH_TRUST_HOST: "true"
-    DATABASE_URL: postgresql://lavigo:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/lavigo
+    DATABASE_URL: postgresql://lavigo:${POSTGRES_PASSWORD:?}@postgres:5432/lavigo
     REDIS_URL: redis://redis:6379
   logging: &logging
     driver: json-file
@@ -95,7 +95,7 @@ services:
     restart: unless-stopped
     environment:
       POSTGRES_USER: lavigo
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?}
       POSTGRES_DB: lavigo
       TZ: UTC
     volumes:
@@ -132,7 +132,7 @@ services:
       PGHOST: postgres
       PGUSER: lavigo
       PGDATABASE: lavigo
-      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?}
       BACKUP_KEEP_DAYS: "14"
     depends_on:
       postgres:
