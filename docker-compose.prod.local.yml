@@ -1,0 +1,32 @@
+# Local production-mode run (P8 step 6, CI e2e): the prod image + prod compose, on plain HTTP,
+# with the fake adapters explicitly allowed by DEMO_FAKES=true. Never use on a real server.
+#
+#   make build
+#   docker compose -f docker-compose.prod.yml -f docker-compose.prod.local.yml --env-file .env.prod.local up -d
+services:
+  caddy:
+    environment:
+      SITE_ADDRESS: ":80"
+    ports: !override
+      - "${HTTP_PORT:-8080}:80"
+
+  web:
+    environment: &demo
+      DEMO_FAKES: "true"
+      FEATURE_SANDBOX: "true"
+      # Fake storage on a volume shared by web and worker (PDFs rendered by the worker, served by web).
+      FAKE_STORAGE_DIR: /data/files
+    volumes:
+      - demo_files:/data/files
+
+  worker:
+    environment: *demo
+    volumes:
+      - demo_files:/data/files
+
+  # Backups need real object storage; not part of a local run.
+  backup:
+    profiles: ["backup"]
+
+volumes:
+  demo_files:

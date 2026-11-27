@@ -3,6 +3,7 @@
 #   web:    node server.js          (Next.js standalone, default CMD)
 #   worker: node dist/worker.js     (BullMQ worker bundled with tsup)
 #   migrate: prisma migrate deploy  (one-shot service in docker-compose.prod.yml)
+#   seeds:   pnpm seed:prod         (dist/seed-prod.js; non-destructive) · pnpm seed (demo, refuses in prod without SEED_DEMO + --force)
 
 ARG NODE_IMAGE=node:22-bookworm-slim
 ARG PNPM_VERSION=12.23.0
@@ -38,10 +39,11 @@ RUN pnpm prisma generate \
 # ── runner ────────────────────────────────────────────────────────────
 FROM ${NODE_IMAGE} AS runner
 ARG PRISMA_VERSION
+ARG PNPM_VERSION
 RUN apt-get update \
  && apt-get install -y --no-install-recommends openssl ca-certificates tini \
  && rm -rf /var/lib/apt/lists/* \
- && npm install -g prisma@${PRISMA_VERSION} \
+ && npm install -g prisma@${PRISMA_VERSION} pnpm@${PNPM_VERSION} \
  && npm cache clean --force
 ENV NODE_ENV=production \
     NEXT_TELEMETRY_DISABLED=1 \
@@ -55,6 +57,12 @@ COPY --from=build --chown=node:node /app/.next/static ./.next/static
 COPY --from=build --chown=node:node /app/public ./public
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/prisma ./prisma
+# `pnpm seed:prod` / `pnpm seed` → scripts/run-seed.mjs → dist/seed-prod.js / dist/seed.js.
+# A scripts-only package.json: no packageManager/dependencies, so pnpm never tries to install or
+# write a lockfile inside the read-only runtime image.
+COPY --from=build --chown=node:node /app/scripts/run-seed.mjs ./scripts/run-seed.mjs
+RUN node -e 'require("fs").writeFileSync("package.json", JSON.stringify({ name: "lavigo-os", private: true, type: "module", scripts: { seed: "node scripts/run-seed.mjs seed", "seed:prod": "node scripts/run-seed.mjs seed-prod" } }, null, 2))' \
+ && chown node:node package.json
 
 USER node
 EXPOSE 3000
